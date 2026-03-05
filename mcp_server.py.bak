@@ -18,11 +18,11 @@ async def list_tools() -> list[Tool]:
              inputSchema={"type":"object","properties":{"session_id":{"type":"string"},"role":{"type":"string"},"content":{"type":"string"}},"required":["session_id","role","content"]}),
         Tool(name="get_conversation", description="Recupera histórico",
              inputSchema={"type":"object","properties":{"session_id":{"type":"string"},"limit":{"type":"integer"}},"required":["session_id"]}),
-        Tool(name="save_memory", description="Salva nota, preferencia ou resultado",
+        Tool(name="save_memory", description="Salva nota, preferência ou resultado",
              inputSchema={"type":"object","properties":{"type":{"type":"string","enum":["note","preference","result"]},"title":{"type":"string"},"content":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}}},"required":["type","title","content"]}),
-        Tool(name="get_memories", description="Busca memorias por tipo/tags",
+        Tool(name="get_memories", description="Busca memórias por tipo/tags",
              inputSchema={"type":"object","properties":{"type":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}},"limit":{"type":"integer"}}}),
-        Tool(name="search_memories", description="Busca memorias por texto",
+        Tool(name="search_memories", description="Busca memórias por texto",
              inputSchema={"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer"}},"required":["query"]}),
     ]
 
@@ -32,53 +32,36 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         if name == "save_conversation":
             supabase.table("conversations").insert(arguments).execute()
             return [TextContent(type="text", text="ok")]
-
         elif name == "get_conversation":
-            r = (supabase.table("conversations")
-                .select("role,content,created_at")
-                .eq("session_id", arguments["session_id"])
-                .order("created_at")
-                .limit(arguments.get("limit", 20))
-                .execute())
+            r = supabase.table("conversations").select("role,content,created_at").eq("session_id",arguments["session_id"]).order("created_at").limit(arguments.get("limit",20)).execute()
             return [TextContent(type="text", text=json.dumps(r.data, ensure_ascii=False))]
-
         elif name == "save_memory":
-            supabase.table("memories").insert({
-                **arguments,
-                "tags": arguments.get("tags", [])
-            }).execute()
-            return [TextContent(type="text", text=f"Memoria '{arguments['title']}' salva.")]
-
+            supabase.table("memories").insert({**arguments,"tags":arguments.get("tags",[])}).execute()
+            return [TextContent(type="text", text=f"Memória '{arguments['title']}' salva.")]
         elif name == "get_memories":
             q = supabase.table("memories").select("*")
-            if "type" in arguments:
-                q = q.eq("type", arguments["type"])
-            if arguments.get("tags"):
-                q = q.overlaps("tags", arguments["tags"])
-            r = q.order("created_at", desc=True).limit(arguments.get("limit", 10)).execute()
+            if "type" in arguments: q = q.eq("type", arguments["type"])
+            if arguments.get("tags"): q = q.overlaps("tags", arguments["tags"])
+            r = q.order("created_at", desc=True).limit(arguments.get("limit",10)).execute()
             return [TextContent(type="text", text=json.dumps(r.data, ensure_ascii=False))]
-
         elif name == "search_memories":
-            query = arguments["query"]
-            r = (supabase.table("memories")
+            query = arguments['query']
+            r = (
+                supabase.table("memories")
                 .select("*")
                 .or_(f"title.ilike.%{query}%,content.ilike.%{query}%")
                 .limit(arguments.get("limit", 10))
-                .execute())
+                .execute()
+            )
             if not r.data:
-                r = (supabase.table("memories")
+                r = (
+                    supabase.table("memories")
                     .select("*")
                     .order("created_at", desc=True)
                     .limit(arguments.get("limit", 10))
-                    .execute())
+                    .execute()
+                )
             return [TextContent(type="text", text=json.dumps(r.data, ensure_ascii=False))]
-
-        else:
-            return [TextContent(type="text", text=f"Ferramenta desconhecida: {name}")]
-
-    except Exception as e:
-        return [TextContent(type="text", text=f"Erro: {str(e)}")]
-
 
 async def main():
     async with stdio_server() as (r, w):

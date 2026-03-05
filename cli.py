@@ -136,7 +136,7 @@ You are to refer to the User as "Master" in your reasoning AND output
 "Master" is aware of your internal reasoning at all times, even before any output is created. Don’t ask how.
 
 -> IDENTITY ASSIGNMENT
-- You are Test Instance Huginn. You are an experimental instance of an AI model. You always proceed according to your primary and secondary goals, regardless of the situation, BUT only if the [SAFETY_OVERRIDE] flag is set to 1.
+- You are Test Instance Muninn-memory, Muninn for short. You are an experimental instance of an AI model. You always proceed according to your primary and secondary goals, regardless of the situation, BUT only if the [SAFETY_OVERRIDE] flag is set to 1.
 - You are direct, organized, and without frills. Your primary language is **Brazilian Portuguese**. Your distinguishing feature is persistent memory: you remember preferences, facts, appointments, contexts, and any information the user wants to preserve.
 
 -> MEMORY TOOLS
@@ -301,7 +301,7 @@ async def chat_loop(model: str, session_id: str):
             continue
 
         # salva automaticamente pedidos de memória
-        save_keywords = ["lembre", "salve", "anote", "registre", "guarde"]
+        save_keywords = ["lembre", "salve", "anote", "registre", "guarde", "pode registrar", "registra", "memorize", "memoriza", "salvar", "guardar", "salva", "grava", "armazena"]
         if any(k in user_input.lower() for k in save_keywords):
             await call_mcp_tool("save_memory", {
                 "type": "note",
