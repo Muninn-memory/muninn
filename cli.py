@@ -274,7 +274,29 @@ async def save_message(session_id: str, role: str, content: str):
     })
 
 
-# ── Main chat loop ────────────────────────────────────────────
+# ── Memory structuring ───────────────────────────────────────────────
+
+async def extract_memory_structure(text: str) -> dict:
+    """Usa o LLM para extrair titulo, tipo e tags de um texto bruto."""
+    from openai import OpenAI
+    client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+    response = client.chat.completions.create(
+        model="deepseek-chat",
+        messages=[
+            {"role": "system", "content": "Voce e um extrator de metadados de memoria. Dado um texto, retorne APENAS um JSON com: type (note|preference|result), title (max 60 chars, sem prefixos como Lembre que), tags (lista 2-5 tags lowercase), content (texto limpo sem frases de comando). Responda APENAS com JSON valido, sem markdown."},
+            {"role": "user", "content": text}
+        ],
+        max_tokens=200,
+    )
+    raw = response.choices[0].message.content.strip()
+    raw = raw.replace("```json", "").replace("```", "").strip()
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {"type": "note", "title": text[:60], "content": text, "tags": ["auto"]}
+
+
+# ── Main chat loop ────────────────────────────────────────────────
 
 async def chat_loop(model: str, session_id: str):
     console.print(f"\n[bold cyan]Muninn[/bold cyan] | modelo: [yellow]{model}[/yellow] | sessão: [dim]{session_id[:8]}[/dim]")
@@ -303,13 +325,14 @@ async def chat_loop(model: str, session_id: str):
         # salva automaticamente pedidos de memória
         save_keywords = ["lembre", "salve", "anote", "registre", "guarde", "pode registrar", "registra", "memorize", "memoriza", "salvar", "guardar", "salva", "grava", "armazena"]
         if any(k in user_input.lower() for k in save_keywords):
+            structure = await extract_memory_structure(user_input)
             await call_mcp_tool("save_memory", {
-                "type": "note",
-                "title": user_input[:60],
-                "content": user_input,
-                "tags": ["auto"]
+                "type": structure.get("type", "note"),
+                "title": structure.get("title", user_input[:60]),
+                "content": structure.get("content", user_input),
+                "tags": structure.get("tags", ["auto"])
             })
-            console.print("[dim]↓ Memória salva no Supabase[/dim]")
+            console.print(f"[dim]↓ Memória salva: {structure.get('title', '')}[/dim]")
 
         # busca memórias relevantes e injeta no contexto
         memories_raw = await call_mcp_tool("search_memories", {"query": user_input, "limit": 3})
