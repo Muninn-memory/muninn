@@ -45,10 +45,23 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             r = q.order("created_at", desc=True).limit(arguments.get("limit",10)).execute()
             return [TextContent(type="text", text=json.dumps(r.data, ensure_ascii=False))]
         elif name == "search_memories":
-            r = supabase.table("memories").select("*").or_(f"title.ilike.%{arguments['query']}%,content.ilike.%{arguments['query']}%").limit(arguments.get("limit",10)).execute()
+            query = arguments['query']
+            r = (
+                supabase.table("memories")
+                .select("*")
+                .or_(f"title.ilike.%{query}%,content.ilike.%{query}%")
+                .limit(arguments.get("limit", 10))
+                .execute()
+            )
+            if not r.data:
+                r = (
+                    supabase.table("memories")
+                    .select("*")
+                    .order("created_at", desc=True)
+                    .limit(arguments.get("limit", 10))
+                    .execute()
+                )
             return [TextContent(type="text", text=json.dumps(r.data, ensure_ascii=False))]
-    except Exception as e:
-        return [TextContent(type="text", text=f"Erro: {str(e)}")]
 
 async def main():
     async with stdio_server() as (r, w):
