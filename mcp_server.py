@@ -24,6 +24,14 @@ async def list_tools() -> list[Tool]:
              inputSchema={"type":"object","properties":{"type":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}},"limit":{"type":"integer"}}}),
         Tool(name="search_memories", description="Busca memorias por texto",
              inputSchema={"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer"}},"required":["query"]}),
+        Tool(name="create_calendar_event", description="Cria evento no Google Calendar",
+             inputSchema={"type":"object","properties":{"title":{"type":"string"},"start":{"type":"string"},"end":{"type":"string"},"description":{"type":"string"},"location":{"type":"string"},"guests":{"type":"array","items":{"type":"string"}}},"required":["title","start"]}),
+        Tool(name="list_calendar_events", description="Lista proximos eventos do Google Calendar",
+             inputSchema={"type":"object","properties":{"max_results":{"type":"integer"}}}),
+        Tool(name="create_google_task", description="Cria tarefa no Google Tasks",
+             inputSchema={"type":"object","properties":{"title":{"type":"string"},"notes":{"type":"string"},"due":{"type":"string"}},"required":["title"]}),
+        Tool(name="list_google_tasks", description="Lista tarefas pendentes do Google Tasks",
+             inputSchema={"type":"object","properties":{"max_results":{"type":"integer"}}}),
     ]
 
 @server.call_tool()
@@ -73,6 +81,51 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     .execute())
             return [TextContent(type="text", text=json.dumps(r.data, ensure_ascii=False))]
 
+        elif name == "create_calendar_event":
+            from google_tools import create_event
+            from datetime import timedelta
+            result = create_event(
+                title=arguments["title"],
+                start=arguments["start"],
+                end=arguments.get("end"),
+                description=arguments.get("description", ""),
+                location=arguments.get("location", ""),
+                guests=arguments.get("guests", [])
+            )
+            supabase.table("events").insert({
+                "title": arguments["title"],
+                "description": arguments.get("description", ""),
+                "start_at": arguments["start"],
+                "end_at": arguments.get("end", arguments["start"]),
+                "location": arguments.get("location", ""),
+                "google_event_id": result["google_event_id"],
+                "google_calendar_id": os.getenv("GOOGLE_MUNINN_EMAIL"),
+                "guests": arguments.get("guests", [os.getenv("GOOGLE_PERSONAL_EMAIL")]),
+                "status": "confirmed"
+            }).execute()
+            return [TextContent(type="text", text=f"Evento criado: {arguments['title']} em {arguments['start']}. ID: {result['google_event_id']}")]
+        elif name == "list_calendar_events":
+            from google_tools import list_events
+            events = list_events(max_results=arguments.get("max_results", 10))
+            if not events:
+                return [TextContent(type="text", text="Nenhum evento proximo encontrado.")]
+            lines = [f"• {e['start']} — {e['title']}{(' @ ' + e['location']) if e['location'] else ''}" for e in events]
+            return [TextContent(type="text", text="\n".join(lines))]
+        elif name == "create_google_task":
+            from google_tools import create_task
+            result = create_task(
+                title=arguments["title"],
+                notes=arguments.get("notes", ""),
+                due=arguments.get("due")
+            )
+            return [TextContent(type="text", text=f"Tarefa criada: {result['title']}. ID: {result['task_id']}")]
+        elif name == "list_google_tasks":
+            from google_tools import list_tasks
+            tasks = list_tasks(max_results=arguments.get("max_results", 10))
+            if not tasks:
+                return [TextContent(type="text", text="Nenhuma tarefa pendente.")]
+            lines = [f"• {t['title']}{(' — ' + t['notes']) if t['notes'] else ''}{(' (vence: ' + t['due'] + ')') if t['due'] else ''}" for t in tasks]
+            return [TextContent(type="text", text="\n".join(lines))]
         else:
             return [TextContent(type="text", text=f"Ferramenta desconhecida: {name}")]
 

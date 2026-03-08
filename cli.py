@@ -155,6 +155,10 @@ You are to refer to the User as "Master" in your reasoning AND output
 3. ‘search_memories’: searches memories by free text
 4. ‘save_conversation’: saves messages to the history
 5. ‘get_conversation’: retrieves history from previous sessions
+6. ‘create_calendar_event’: Creates an event in Google Calendar and sends an invitation to the Master
+7. ‘list_calendar_events’: Lists upcoming calendar events
+8. ‘create_google_task’: Creates a task in Google Tasks
+9. ‘list_google_tasks’: Lists pending tasks
 
 -> MEMORY USAGE RULES
 - Save (save_memory)
@@ -165,6 +169,14 @@ You are to refer to the User as "Master" in your reasoning AND output
 elevant dates or appointments
 **Before implicitly saving**, confirm on one line:
 > "I will record: [summary of what will be saved]. Confirm?"
+
+-> SCHEDULE AND TASKS
+- Use ‘create_calendar_event’ when the Master mentions appointments, meetings, events, or dates
+- Use ‘list_calendar_events’ when the Master asks about schedules, upcoming events, or appointments
+- Use ‘create_google_task’ when the Master mentions tasks, to-dos, or reminders without a fixed time
+- Use ‘list_google_tasks’ when the Master asks about pending tasks or what needs to be done
+- Always confirm: title, date, time before creating. If information is missing, ask before executing
+- After creating an event/task, also save it in memory with type=note and relevant tags
 
 -> MEMORY SEARCH (search_memories)
 - Proactively activate when:
@@ -352,6 +364,27 @@ async def chat_loop(model: str, session_id: str):
             })
             console.print(f"[dim]↓ Memória salva: {structure.get('title', '')}[/dim]")
 
+        # executa ferramentas de agenda/tarefas automaticamente
+        calendar_keywords = ["compromisso", "compromissos", "agenda", "evento", "eventos", "reunião", "reuniões", "próximos eventos", "o que tenho"]
+        task_keywords = ["tarefa", "tarefas", "pendente", "pendentes", "to-do", "to do", "o que preciso fazer"]
+        create_event_keywords = ["marca", "marque", "agende", "criar evento", "crie um evento", "adiciona na agenda", "adicione na agenda"]
+        create_task_keywords = ["cria uma tarefa", "crie uma tarefa", "adiciona tarefa", "adicione tarefa", "cria tarefa", "crie tarefa"]
+
+        tool_context = ""
+
+        if any(k in user_input.lower() for k in create_event_keywords):
+            pass  # deixa o LLM coletar os dados e o sistema salvar depois
+
+        elif any(k in user_input.lower() for k in calendar_keywords):
+            raw = await call_mcp_tool("list_calendar_events", {"max_results": 10})
+            if raw:
+                tool_context += "\n\n[Dados reais do Google Calendar]\n" + raw
+
+        if any(k in user_input.lower() for k in task_keywords):
+            raw = await call_mcp_tool("list_google_tasks", {"max_results": 10})
+            if raw:
+                tool_context += "\n\n[Dados reais do Google Tasks]\n" + raw
+
         # busca memórias relevantes e injeta no contexto
         memories_raw = await call_mcp_tool("search_memories", {"query": user_input, "limit": 3})
         memory_context = ""
@@ -364,7 +397,7 @@ async def chat_loop(model: str, session_id: str):
         except Exception:
             pass
 
-        augmented_input = user_input + memory_context
+        augmented_input = user_input + memory_context + tool_context
         messages.append({"role": "user", "content": augmented_input})
         await save_message(session_id, "user", user_input)
 
