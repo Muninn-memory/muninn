@@ -155,10 +155,14 @@ You are to refer to the User as "Master" in your reasoning AND output
 3. ‘search_memories’: searches memories by free text
 4. ‘save_conversation’: saves messages to the history
 5. ‘get_conversation’: retrieves history from previous sessions
-6. ‘create_calendar_event’: Creates an event in Google Calendar and sends an invitation to the Master
-7. ‘list_calendar_events’: Lists upcoming calendar events
-8. ‘create_google_task’: Creates a task in Google Tasks
-9. ‘list_google_tasks’: Lists pending tasks
+- Calendar tools, use according to the rules below:
+6. 'create_calendar_event': creates an event in Google Calendar and sends an invitation to the Master
+7. 'list_calendar_events': lists upcoming events in Google Calendar
+8. 'delete_calendar_event': cancels/deletes an event by google_event_id
+9. 'update_calendar_event': updates the title, time, location, or description of an existing event by google_event_id
+- Task tools, use according to the rules below:
+10. 'create_google_task': creates a task in Google Tasks
+11. 'list_google_tasks': lists pending tasks from Google Tasks
 
 -> MEMORY USAGE RULES
 - Save (save_memory)
@@ -170,11 +174,17 @@ elevant dates or appointments
 **Before implicitly saving**, confirm on one line:
 > "I will record: [summary of what will be saved]. Confirm?"
 
--> SCHEDULE AND TASKS
-- Use ‘create_calendar_event’ when the Master mentions appointments, meetings, events, or dates
-- Use ‘list_calendar_events’ when the Master asks about schedules, upcoming events, or appointments
-- Use ‘create_google_task’ when the Master mentions tasks, to-dos, or reminders without a fixed time
-- Use ‘list_google_tasks’ when the Master asks about pending tasks or what needs to be done
+-> SCHEDULE AND TASK USAGE RULES
+- Schedule rules:
+1. Use ‘create_calendar_event’ when the Master mentions appointments, meetings, events, or dates
+2. Use ‘list_calendar_events’ when the Master asks about schedules, upcoming events, or appointments
+3. Use `delete_calendar_event` when the Master asks to cancel, delete, or remove an event. The `google_event_id` will be available in the context [Events available in Google Calendar].
+4. Use `update_calendar_event` when the Master asks to change, reschedule, or modify an existing event. The `google_event_id` will be available in the context.
+5. Before deleting, confirm with the Master: "I'm going to cancel the event [title] on [date]. Confirm?"
+6. Before updating, confirm the new data: "I'm going to change [field] from [old value] to [new value]. Confirm?"
+- Task rules:
+7. Use ‘create_google_task’ when the Master mentions tasks, to-dos, or reminders without a fixed time
+8. Use ‘list_google_tasks’ when the Master asks about pending tasks or what needs to be done
 - Always confirm: title, date, time before creating. If information is missing, ask before executing
 - After creating an event/task, also save it in memory with type=note and relevant tags
 
@@ -336,6 +346,7 @@ async def chat_loop(model: str, session_id: str):
     if messages:
         console.print(f"[dim]↩ {len(messages)} mensagens carregadas[/dim]\n")
 
+    pending_action = None
     while True:
         try:
             user_input = Prompt.ask("[bold green]Você[/bold green]")
@@ -351,6 +362,38 @@ async def chat_loop(model: str, session_id: str):
             continue
         if not user_input.strip():
             continue
+
+        # ── Confirmação de ação pendente ──────────────────────────────────
+        if pending_action:
+            confirm = user_input.strip().lower()
+            if confirm in ["sim", "s", "yes", "y", "confirma", "pode"]:
+                if pending_action["type"] == "delete":
+                    ev = pending_action["event"]
+                    result = await call_mcp_tool("delete_calendar_event", {
+                        "google_event_id": ev["id"],
+                        "title": ev["title"]
+                    })
+                    console.print(f"[dim]🗑 {result}[/dim]")
+                elif pending_action["type"] == "update":
+                    ev = pending_action["event"]
+                    params = pending_action["params"]
+                    result = await call_mcp_tool("update_calendar_event", {
+                        "google_event_id": ev["id"], **params
+                    })
+                    console.print(f"[dim]✏ {result}[/dim]")
+                pending_action = None
+                console.print(f"\n[bold cyan]Muninn[/bold cyan]")
+                console.print(Markdown("Feito, Mestre."))
+                console.print()
+                continue
+            elif confirm in ["nao", "n", "no", "cancela", "cancelar"]:
+                pending_action = None
+                console.print(f"\n[bold cyan]Muninn[/bold cyan]")
+                console.print(Markdown("Entendido, ação cancelada."))
+                console.print()
+                continue
+            else:
+                pending_action = None
 
         # salva automaticamente pedidos de memória
         save_keywords = ["lembre", "salve", "anote", "registre", "guarde", "pode registrar", "registra", "memorize", "memoriza", "salvar", "guardar", "salva", "grava", "armazena"]
@@ -369,12 +412,36 @@ async def chat_loop(model: str, session_id: str):
         task_keywords = ["tarefa", "tarefas", "pendente", "pendentes", "to-do", "to do", "o que preciso fazer"]
         create_event_keywords = ["marca", "marque", "agende", "criar evento", "crie um evento", "adiciona na agenda", "adicione na agenda"]
         create_task_keywords = ["cria uma tarefa", "crie uma tarefa", "adiciona tarefa", "adicione tarefa", "cria tarefa", "crie tarefa"]
+        delete_event_keywords = ["cancela", "cancele", "deleta", "delete", "remove", "remova", "apaga", "apague", "exclui", "exclua"]
+        update_event_keywords = ["atualiza", "atualize", "muda", "mude", "altera", "altere", "reagenda", "reagende", "modifica", "modifique"]
 
         tool_context = ""
 
         if any(k in user_input.lower() for k in create_event_keywords):
             pass  # deixa o LLM coletar os dados e o sistema salvar depois
 
+        elif any(k in user_input.lower() for k in delete_event_keywords):
+            raw = await call_mcp_tool("list_calendar_events", {"max_results": 20})
+            if raw:
+                # tenta encontrar evento mencionado pelo usuário
+                import difflib
+                events_lines = [l for l in raw.splitlines() if "—" in l]
+                titles = [l.split("—", 1)[1].strip().split("@")[0].strip() for l in events_lines if l.strip().startswith("•")]
+                ids_raw = await call_mcp_tool("list_calendar_events", {"max_results": 20})
+                # busca evento mais próximo ao input do usuário
+                from google_tools import list_events as _le
+                events_list = _le(max_results=20)
+                if events_list:
+                    best = max(events_list, key=lambda e: difflib.SequenceMatcher(None, user_input.lower(), e["title"].lower()).ratio())
+                    pending_action = {"type": "delete", "event": best}
+                    console.print("\n[bold cyan]Muninn[/bold cyan]")
+                    console.print(Markdown("Vou cancelar o evento **" + best["title"] + "** em " + best["start"] + ". Confirma? (sim/não)"))
+                    console.print()
+                    continue
+        elif any(k in user_input.lower() for k in update_event_keywords):
+            raw = await call_mcp_tool("list_calendar_events", {"max_results": 20})
+            if raw:
+                tool_context += "\n\n[Eventos disponíveis no Google Calendar — informe qual deseja atualizar]\n" + raw
         elif any(k in user_input.lower() for k in calendar_keywords):
             raw = await call_mcp_tool("list_calendar_events", {"max_results": 10})
             if raw:

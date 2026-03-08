@@ -32,6 +32,10 @@ async def list_tools() -> list[Tool]:
              inputSchema={"type":"object","properties":{"title":{"type":"string"},"notes":{"type":"string"},"due":{"type":"string"}},"required":["title"]}),
         Tool(name="list_google_tasks", description="Lista tarefas pendentes do Google Tasks",
              inputSchema={"type":"object","properties":{"max_results":{"type":"integer"}}}),
+        Tool(name="delete_calendar_event", description="Deleta evento do Google Calendar pelo ID",
+             inputSchema={"type":"object","properties":{"google_event_id":{"type":"string"},"title":{"type":"string"}},"required":["google_event_id"]}),
+        Tool(name="update_calendar_event", description="Atualiza evento existente no Google Calendar",
+             inputSchema={"type":"object","properties":{"google_event_id":{"type":"string"},"title":{"type":"string"},"start":{"type":"string"},"end":{"type":"string"},"description":{"type":"string"},"location":{"type":"string"}},"required":["google_event_id"]}),
     ]
 
 @server.call_tool()
@@ -126,6 +130,31 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 return [TextContent(type="text", text="Nenhuma tarefa pendente.")]
             lines = [f"• {t['title']}{(' — ' + t['notes']) if t['notes'] else ''}{(' (vence: ' + t['due'] + ')') if t['due'] else ''}" for t in tasks]
             return [TextContent(type="text", text="\n".join(lines))]
+        elif name == "delete_calendar_event":
+            from google_tools import delete_event
+            delete_event(arguments["google_event_id"])
+            supabase.table("events").update({"status": "cancelled"}).eq("google_event_id", arguments["google_event_id"]).execute()
+            return [TextContent(type="text", text=f"Evento deletado: {arguments.get('title', arguments['google_event_id'])}")]
+        elif name == "update_calendar_event":
+            from google_tools import update_event
+            result = update_event(
+                google_event_id=arguments["google_event_id"],
+                title=arguments.get("title"),
+                start=arguments.get("start"),
+                end=arguments.get("end"),
+                description=arguments.get("description"),
+                location=arguments.get("location")
+            )
+            supabase.table("events").update({
+                k: v for k, v in {
+                    "title": arguments.get("title"),
+                    "start_at": arguments.get("start"),
+                    "end_at": arguments.get("end"),
+                    "description": arguments.get("description"),
+                    "location": arguments.get("location")
+                }.items() if v is not None
+            }).eq("google_event_id", arguments["google_event_id"]).execute()
+            return [TextContent(type="text", text=f"Evento atualizado: {result['title']} em {result['start']}")]
         else:
             return [TextContent(type="text", text=f"Ferramenta desconhecida: {name}")]
 

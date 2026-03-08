@@ -137,3 +137,49 @@ def list_tasks(max_results: int = 10) -> list:
         {"id": t["id"], "title": t["title"], "due": t.get("due", ""), "notes": t.get("notes", "")}
         for t in result.get("items", [])
     ]
+
+
+def delete_event(google_event_id: str) -> bool:
+    """Deleta um evento pelo ID."""
+    service = get_calendar_service()
+    service.events().delete(
+        calendarId=MUNINN_EMAIL,
+        eventId=google_event_id
+    ).execute()
+    return True
+
+
+def update_event(google_event_id: str, title: str = None, start: str = None,
+                 end: str = None, description: str = None,
+                 location: str = None) -> dict:
+    """Atualiza campos de um evento existente."""
+    service = get_calendar_service()
+    event = service.events().get(
+        calendarId=MUNINN_EMAIL,
+        eventId=google_event_id
+    ).execute()
+
+    if title:
+        event["summary"] = title
+    if description is not None:
+        event["description"] = description
+    if location is not None:
+        event["location"] = location
+    if start:
+        event["start"] = {"dateTime": start, "timeZone": "America/Sao_Paulo"}
+    if end:
+        event["end"] = {"dateTime": end, "timeZone": "America/Sao_Paulo"}
+
+    result = service.events().update(
+        calendarId=MUNINN_EMAIL,
+        eventId=google_event_id,
+        body=event,
+        sendUpdates="all"
+    ).execute()
+
+    return {
+        "google_event_id": result["id"],
+        "title": result.get("summary"),
+        "start": result["start"].get("dateTime"),
+        "status": result.get("status")
+    }
