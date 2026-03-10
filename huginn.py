@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 # -*- coding: utf-8 -*-
 import asyncio
@@ -21,6 +21,42 @@ AUTH_KEYWORD = os.getenv("HUGINN_AUTH_KEYWORD", "").lower().strip()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+
+
+async def summarize_with_deepseek(query: str, results: str) -> str:
+    """Resume os resultados da busca via DeepSeek."""
+    from openai import OpenAI
+    try:
+        client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": "VocÃª Ã© Huginn, o corvo do pensamento. Resume resultados de busca de forma direta e objetiva em portuguÃªs brasileiro. Cite as fontes ao final."},
+                {"role": "user", "content": f"Pergunta: {query}\n\nResultados encontrados:\n{results}"}
+            ],
+            max_tokens=1024,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.exception("Erro ao resumir com DeepSeek")
+        return results  # fallback para resultados brutos
+
+async def translate_query(query: str) -> str:
+    """Traduz a consulta para inglÃªs."""
+    from openai import OpenAI
+    try:
+        client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "system", "content": "Traduza a query para inglÃªs. Responda APENAS com a query traduzida, sem explicaÃ§Ãµes."},
+                {"role": "user", "content": query}],
+            max_tokens=100,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.exception("Erro ao traduzir consulta")
+        return query
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.message.text:
@@ -28,7 +64,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     chat_id = update.effective_chat.id
 
-    # Bloqueia qualquer chat não autorizado
+    # Bloqueia qualquer chat nÃ£o autorizado
     if chat_id != ALLOWED_CHAT_ID:
         logger.warning(f"Acesso negado: chat_id={chat_id}")
         return
@@ -39,39 +75,45 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Comando /start
     if lower == "/start":
         await update.message.reply_text(
-            "Huginn ativo. Corvo do pensamento a seu serviço, Mestre."
+            "Huginn ativo. Corvo do pensamento a seu serviÃ§o, Mestre."
         )
         return
 
-    # Comando /memoria — consulta memórias do Muninn
+    # Comando /memoria â€” consulta memÃ³rias do Muninn
     if lower == "/memoria":
-        await update.message.reply_text("Consultando memória do Muninn...")
+        await update.message.reply_text("Consultando memÃ³ria do Muninn...")
         raw = await get_memories(limit=10)
-        await update.message.reply_text(raw[:4000] if raw else "Nenhuma memória encontrada.")
+        await update.message.reply_text(raw[:4000] if raw else "Nenhuma memÃ³ria encontrada.")
         return
 
-    # Busca com keyword de autorização
+    # Busca com keyword de autorizaÃ§Ã£o
     if AUTH_KEYWORD and lower.startswith(AUTH_KEYWORD):
         query = text[len(AUTH_KEYWORD):].strip()
         if not query:
-            await update.message.reply_text("Qual é a consulta, Mestre?")
+            await update.message.reply_text("Qual Ã© a consulta, Mestre?")
             return
 
         await update.message.reply_text(f"Buscando: {query}...")
-        results = web_search(query, max_results=5)
+        english_query = await translate_query(query)
+        logger.info(f"Query traduzida: {english_query}")
+        results = web_search(english_query, max_results=5, region="br-pt", timelimit="d")
         formatted = format_results(results)
 
-        # Salva resultado na memória do Muninn
+        # Resumo via DeepSeek
+        await update.message.reply_text("Analisando resultados...")
+        summary = await summarize_with_deepseek(query, formatted)
+
+        # Salva resumo na memÃ³ria do Muninn
         await save_to_memory(
             title=f"Pesquisa: {query[:50]}",
-            content=formatted[:2000],
+            content=summary[:2000],
             tags=["huginn", "pesquisa", "web"]
         )
 
-        await update.message.reply_text(formatted[:4000])
+        await update.message.reply_text(summary[:4000])
         return
 
-    # Mensagem sem keyword — informa como usar
+    # Mensagem sem keyword â€” informa como usar
     await update.message.reply_text(
         f"Use '{AUTH_KEYWORD} [consulta]' para pesquisar, Mestre.\n"
         f"Ou /memoria para consultar o Muninn."
@@ -95,3 +137,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
