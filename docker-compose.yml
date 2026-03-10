@@ -9,3 +9,15 @@ services:
       - ./credentials.json:/app/credentials.json:ro
       - ./token.json:/app/token.json:rw
     restart: unless-stopped
+
+  huginn:
+    build: .
+    container_name: huginn
+    command: python huginn.py
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./credentials.json:/app/credentials.json:ro
+      - ./token.json:/app/token.json:rw
+    restart: unless-stopped
+    depends_on:
+      - muninn
