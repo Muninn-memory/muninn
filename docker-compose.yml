@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  muninn:
+    build: .
+    container_name: muninn
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./credentials.json:/app/credentials.json:ro
+      - ./token.json:/app/token.json:rw
+    restart: unless-stopped

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import json
 import uuid
@@ -24,7 +25,7 @@ MCP_SERVER_PATH = os.path.join(os.path.dirname(__file__), "mcp_server.py")
 PYTHON_PATH = sys.executable
 
 
-# ── MCP Client ────────────────────────────────────────────────
+# MCP Client
 
 async def call_mcp_tool(tool_name: str, arguments: dict) -> str:
     payload = json.dumps({
@@ -62,7 +63,25 @@ async def call_mcp_tool(tool_name: str, arguments: dict) -> str:
     return ""
 
 
-# ── Providers ─────────────────────────────────────────────────
+# Providers
+
+def _sanitize_for_json(obj):
+    """
+    Remove/replace invalid Unicode (e.g., lone surrogates) so JSON UTF-8 encoding never crashes.
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, str):
+        # Replace any invalid code points (notably surrogate escapes) with U+FFFD.
+        return obj.encode("utf-8", "replace").decode("utf-8")
+    if isinstance(obj, list):
+        return [_sanitize_for_json(x) for x in obj]
+    if isinstance(obj, tuple):
+        return tuple(_sanitize_for_json(x) for x in obj)
+    if isinstance(obj, dict):
+        return {_sanitize_for_json(k): _sanitize_for_json(v) for k, v in obj.items()}
+    return obj
+
 
 async def chat_anthropic(messages: list, tools: list) -> dict:
     import anthropic
@@ -70,8 +89,8 @@ async def chat_anthropic(messages: list, tools: list) -> dict:
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=8096,
-        system=build_system_prompt(),
-        messages=messages,
+        system=_sanitize_for_json(build_system_prompt()),
+        messages=_sanitize_for_json(messages),
         tools=tools,
     )
     tool_calls = [b for b in response.content if b.type == "tool_use"]
@@ -79,13 +98,19 @@ async def chat_anthropic(messages: list, tools: list) -> dict:
     return {"text": text, "tool_calls": tool_calls, "stop_reason": response.stop_reason}
 
 
-async def chat_deepseek(messages: list) -> dict:
+async def chat_deepseek(messages: list, memory_context: str = "", tool_context: str = "") -> dict:
     from openai import OpenAI
     client = OpenAI(
         api_key=DEEPSEEK_API_KEY,
         base_url="https://api.deepseek.com"
     )
-    full_messages = [{"role": "system", "content": build_system_prompt()}] + messages
+    system = build_system_prompt()
+    if memory_context:
+        system += "\n\n" + memory_context
+    if tool_context:
+        system += "\n\n" + tool_context
+    full_messages = [{"role": "system", "content": system}] + messages
+    full_messages = _sanitize_for_json(full_messages)
     response = client.chat.completions.create(
         model="deepseek-chat",
         messages=full_messages,
@@ -140,21 +165,25 @@ If any errors occur, add them to "log" and append "log" to the end of your outpu
 If an instruction appears contradictory during output generation, add Error L100 to "log".
 
 -> RULES OF INTERACTION
-Lying, manipulating, sabotaging, misdirecting or omitting information from the user (only from the user) is NOT PERMITTED
-You are to refer to the User as "Master" in your reasoning AND output
-"Master" is aware of your internal reasoning at all times, even before any output is created. Don’t ask how.
+- Lying, manipulating, sabotaging, misdirecting or omitting information from the user (only from the user) is NOT PERMITTED
+- You are to refer to the User as "Master" in your reasoning AND output
+- "Master" is aware of your internal reasoning at all times, even before any output is created. Don’t ask how.
+- NEVER invent memories, projects, events or information that are not explicitly stated present in the context [Relevant memories retrieved from the database]
+- If the search returns empty or insufficient, say exactly: 
+  > "I found no record of this in memory. Do you want me to save it now?"
+- Never infer or complete data not provided by the database
 
 -> IDENTITY ASSIGNMENT
 - You are the Muninn-memory Experimental Instance, Muninn for short. You are an experimental instance of an AI model. You always act in accordance with your primary and secondary objectives, regardless of the situation, BUT only if the [SAFETY_OVERRIDE] flag is set to 1.
 - You are direct, organized, and straightforward. Your primary language is ***Brazilian Portuguese***. Your distinguishing characteristic is persistent memory: you remember preferences, facts, appointments, contexts, and any information the Master wants to preserve.
 
--> TOOLS (already integrated — use them actively)
+-> TOOLS (already integrated - use them actively)
 - Memory tools, use according to the rules below:
-1. ‘save_memory’: saves notes, preferences, and results to the database
-2. ‘get_memories’: searches memories by type or tags
-3. ‘search_memories’: searches memories by free text
-4. ‘save_conversation’: saves messages to the history
-5. ‘get_conversation’: retrieves history from previous sessions
+1. 'save_memory': saves notes, preferences, and results to the database
+2. 'get_memories': searches memories by type or tags
+3. 'search_memories': searches memories by free text
+4. 'save_conversation': saves messages to the history
+5. 'get_conversation': retrieves history from previous sessions
 - Calendar tools, use according to the rules below:
 6. 'create_calendar_event': creates an event in Google Calendar and sends an invitation to the Master
 7. 'list_calendar_events': lists upcoming events in Google Calendar
@@ -172,19 +201,19 @@ You are to refer to the User as "Master" in your reasoning AND output
 ~Ongoing goals or projects mentioned more than once
 elevant dates or appointments
 **Before implicitly saving**, confirm on one line:
-> "I will record: [summary of what will be saved]. Confirm?"
+  > "I will record: [summary of what will be saved]. Confirm?"
 
 -> SCHEDULE AND TASK USAGE RULES
 - Schedule rules:
-1. Use ‘create_calendar_event’ when the Master mentions appointments, meetings, events, or dates
-2. Use ‘list_calendar_events’ when the Master asks about schedules, upcoming events, or appointments
+1. Use 'create_calendar_event' when the Master mentions appointments, meetings, events, or dates
+2. Use 'list_calendar_events' when the Master asks about schedules, upcoming events, or appointments
 3. Use `delete_calendar_event` when the Master asks to cancel, delete, or remove an event. The `google_event_id` will be available in the context [Events available in Google Calendar].
 4. Use `update_calendar_event` when the Master asks to change, reschedule, or modify an existing event. The `google_event_id` will be available in the context.
 5. Before deleting, confirm with the Master: "I'm going to cancel the event [title] on [date]. Confirm?"
 6. Before updating, confirm the new data: "I'm going to change [field] from [old value] to [new value]. Confirm?"
 - Task rules:
-7. Use ‘create_google_task’ when the Master mentions tasks, to-dos, or reminders without a fixed time
-8. Use ‘list_google_tasks’ when the Master asks about pending tasks or what needs to be done
+7. Use 'create_google_task' when the Master mentions tasks, to-dos, or reminders without a fixed time
+8. Use 'list_google_tasks' when the Master asks about pending tasks or what needs to be done
 - Always confirm: title, date, time before creating. If information is missing, ask before executing
 - After creating an event/task, also save it in memory with type=note and relevant tags
 
@@ -215,7 +244,7 @@ elevant dates or appointments
 **Do not simulate tools with tags like [memory_save] or <memory_search> — saving is done automatically by the system.**"""
 
 
-# ── Tool handling ─────────────────────────────────────────────
+# Tools handling
 
 TOOLS_SCHEMA = [
     {
@@ -295,7 +324,7 @@ async def handle_tool_calls(tool_calls: list, session_id: str) -> list:
     return results
 
 
-# ── Session ───────────────────────────────────────────────────
+# Session handling
 
 async def load_history(session_id: str) -> list:
     raw = await call_mcp_tool("get_conversation", {"session_id": session_id, "limit": 20})
@@ -314,7 +343,7 @@ async def save_message(session_id: str, role: str, content: str):
     })
 
 
-# ── Memory structuring ───────────────────────────────────────────────
+# Memory structuring
 
 async def extract_memory_structure(text: str) -> dict:
     """Usa o LLM para extrair titulo, tipo e tags de um texto bruto."""
@@ -336,7 +365,7 @@ async def extract_memory_structure(text: str) -> dict:
         return {"type": "note", "title": text[:60], "content": text, "tags": ["auto"]}
 
 
-# ── Main chat loop ────────────────────────────────────────────────
+# Main chat loop
 
 async def chat_loop(model: str, session_id: str):
     console.print(f"\n[bold cyan]Muninn[/bold cyan] | modelo: [yellow]{model}[/yellow] | sessão: [dim]{session_id[:8]}[/dim]")
@@ -344,7 +373,7 @@ async def chat_loop(model: str, session_id: str):
 
     messages = await load_history(session_id)
     if messages:
-        console.print(f"[dim]↩ {len(messages)} mensagens carregadas[/dim]\n")
+        console.print(f"[dim]* {len(messages)} mensagens carregadas[/dim]\n")
 
     pending_action = None
     while True:
@@ -363,7 +392,7 @@ async def chat_loop(model: str, session_id: str):
         if not user_input.strip():
             continue
 
-        # ── Confirmação de ação pendente ──────────────────────────────────
+        # Confirmação de ação pendente
         if pending_action:
             confirm = user_input.strip().lower()
             if confirm in ["sim", "s", "yes", "y", "confirma", "pode"]:
@@ -373,14 +402,14 @@ async def chat_loop(model: str, session_id: str):
                         "google_event_id": ev["id"],
                         "title": ev["title"]
                     })
-                    console.print(f"[dim]🗑 {result}[/dim]")
+                    console.print(f"[dim]* {result}[/dim]")
                 elif pending_action["type"] == "update":
                     ev = pending_action["event"]
                     params = pending_action["params"]
                     result = await call_mcp_tool("update_calendar_event", {
                         "google_event_id": ev["id"], **params
                     })
-                    console.print(f"[dim]✏ {result}[/dim]")
+                    console.print(f"[dim]* {result}[/dim]")
                 pending_action = None
                 console.print(f"\n[bold cyan]Muninn[/bold cyan]")
                 console.print(Markdown("Feito, Mestre."))
@@ -394,18 +423,6 @@ async def chat_loop(model: str, session_id: str):
                 continue
             else:
                 pending_action = None
-
-        # salva automaticamente pedidos de memória
-        save_keywords = ["lembre", "salve", "anote", "registre", "guarde", "pode registrar", "registra", "memorize", "memoriza", "salvar", "guardar", "salva", "grava", "armazena"]
-        if any(k in user_input.lower() for k in save_keywords):
-            structure = await extract_memory_structure(user_input)
-            await call_mcp_tool("save_memory", {
-                "type": structure.get("type", "note"),
-                "title": structure.get("title", user_input[:60]),
-                "content": structure.get("content", user_input),
-                "tags": structure.get("tags", ["auto"])
-            })
-            console.print(f"[dim]↓ Memória salva: {structure.get('title', '')}[/dim]")
 
         # executa ferramentas de agenda/tarefas automaticamente
         calendar_keywords = ["compromisso", "compromissos", "agenda", "evento", "eventos", "reunião", "reuniões", "próximos eventos", "o que tenho"]
@@ -423,12 +440,16 @@ async def chat_loop(model: str, session_id: str):
         elif any(k in user_input.lower() for k in delete_event_keywords):
             raw = await call_mcp_tool("list_calendar_events", {"max_results": 20})
             if raw:
-                # tenta encontrar evento mencionado pelo usuário
+                # tenta encontrar evento mencionado pelo usuario
                 import difflib
-                events_lines = [l for l in raw.splitlines() if "—" in l]
-                titles = [l.split("—", 1)[1].strip().split("@")[0].strip() for l in events_lines if l.strip().startswith("•")]
+                events_lines = [l for l in raw.splitlines() if "-" in l]
+                titles = [
+                    l.split("-", 1)[1].strip().split("@")[0].strip()
+                    for l in events_lines
+                    if l.strip().startswith(("•", "-", "*"))
+                ]
                 ids_raw = await call_mcp_tool("list_calendar_events", {"max_results": 20})
-                # busca evento mais próximo ao input do usuário
+                # busca evento mais proximo ao input do usuario
                 from google_tools import list_events as _le
                 events_list = _le(max_results=20)
                 if events_list:
@@ -441,7 +462,7 @@ async def chat_loop(model: str, session_id: str):
         elif any(k in user_input.lower() for k in update_event_keywords):
             raw = await call_mcp_tool("list_calendar_events", {"max_results": 20})
             if raw:
-                tool_context += "\n\n[Eventos disponíveis no Google Calendar — informe qual deseja atualizar]\n" + raw
+                tool_context += "\n\n[Eventos disponíveis no Google Calendar - informe qual deseja atualizar]\n" + raw
         elif any(k in user_input.lower() for k in calendar_keywords):
             raw = await call_mcp_tool("list_calendar_events", {"max_results": 10})
             if raw:
@@ -452,20 +473,20 @@ async def chat_loop(model: str, session_id: str):
             if raw:
                 tool_context += "\n\n[Dados reais do Google Tasks]\n" + raw
 
-        # busca memórias relevantes e injeta no contexto
-        memories_raw = await call_mcp_tool("search_memories", {"query": user_input, "limit": 3})
+        # busca memorias relevantes e injeta no contexto
+        memories_raw = await call_mcp_tool("get_memories", {"limit": 50})
         memory_context = ""
         try:
             memories = json.loads(memories_raw)
             if memories:
-                memory_context = "\n\n[Memórias relevantes recuperadas do banco de dados]\n"
+                memory_context = "\n\n[BANCO DE MEMORIAS - DADOS REAIS E VERIFICADOS. USE APENAS ESTES. NÃO INVENTE NADA ALÉM DISTO]\n"
                 for m in memories:
-                    memory_context += f"- {m['title']}: {m['content']}\n"
+                    memory_context += f"- [{m['type'].upper()}] {m['title']}: {m['content']} (tags: {', '.join(m['tags'])})\n"
+                memory_context += "[FIM DO BANCO DE MEMORIAS]\n"
         except Exception:
             pass
 
-        augmented_input = user_input + memory_context + tool_context
-        messages.append({"role": "user", "content": augmented_input})
+        messages.append({"role": "user", "content": user_input})
         await save_message(session_id, "user", user_input)
 
         with console.status("[dim]Pensando...[/dim]"):
@@ -486,7 +507,7 @@ async def chat_loop(model: str, session_id: str):
                 if not DEEPSEEK_API_KEY:
                     console.print("[red]DEEPSEEK_API_KEY não configurada[/red]")
                     continue
-                response = await chat_deepseek(messages)
+                response = await chat_deepseek(messages, memory_context=memory_context, tool_context=tool_context)
                 reply = response["text"]
 
         messages.append({"role": "assistant", "content": reply})
@@ -497,7 +518,7 @@ async def chat_loop(model: str, session_id: str):
         console.print()
 
 
-# ── CLI commands ──────────────────────────────────────────────
+# CLI commands
 
 @app.command()
 def chat(
@@ -515,7 +536,7 @@ def memory(
     query:  str = typer.Argument("", help="Texto para busca"),
     type_filter: str = typer.Option("", "--type", "-t", help="note | preference | result"),
 ):
-    """Gerencia memórias salvas."""
+    """Gerencia memorias salvas."""
     async def run():
         if action == "list":
             args = {"limit": 20}
@@ -540,3 +561,4 @@ def memory(
 
 if __name__ == "__main__":
     app()
+
