@@ -6,6 +6,8 @@ from typing import TypedDict
 from ddgs import DDGS
 
 logger = logging.getLogger(__name__)
+MAX_SNIPPET_LENGTH = 500
+MAX_ALLOWED_RESULTS = 10
 
 
 class WebSearchResult(TypedDict, total=False):
@@ -13,6 +15,12 @@ class WebSearchResult(TypedDict, total=False):
     url: str
     snippet: str
     error: str
+
+
+def _normalize_text(value: object, fallback: str = "") -> str:
+    """Remove quebras e espacos excessivos para manter texto compacto."""
+    compact = " ".join(str(value or "").split())
+    return compact or fallback
 
 
 def web_search(
@@ -26,14 +34,22 @@ def web_search(
     """
     Busca no DuckDuckGo e retorna lista de resultados.
 
-    Os campos retornados são:
-    - title: título do resultado
+    Campos retornados:
+    - title: titulo do resultado
     - url: URL do resultado
-    - snippet: pequeno resumo do conteúdo
-    - error: mensagem de erro em caso de falha
+    - snippet: resumo curto do conteudo
+    - error: mensagem em caso de falha
     """
+    normalized_query = _normalize_text(query)
+    if not normalized_query:
+        return []
+    if max_results <= 0:
+        return []
+
+    limit = min(max_results, MAX_ALLOWED_RESULTS)
+
     try:
-        search_kwargs: dict[str, object] = {"max_results": max_results}
+        search_kwargs: dict[str, object] = {"max_results": limit}
         if region is not None:
             search_kwargs["region"] = region
         if safesearch is not None:
@@ -42,38 +58,45 @@ def web_search(
             search_kwargs["timelimit"] = timelimit
 
         with DDGS() as ddgs:
-            results = list(ddgs.text(query, **search_kwargs))
+            results = list(ddgs.text(normalized_query, **search_kwargs))
 
         formatted_results: list[WebSearchResult] = []
-        for r in results:
+        seen_urls: set[str] = set()
+        for result in results:
+            url = _normalize_text(result.get("href"))
+            if not url or url in seen_urls:
+                continue
+
+            seen_urls.add(url)
             formatted_results.append(
                 WebSearchResult(
-                    title=str(r.get("title", "")).strip(),
-                    url=str(r.get("href", "")).strip(),
-                    snippet=str(r.get("body", "")).strip(),
+                    title=_normalize_text(result.get("title"), "(sem titulo)"),
+                    url=url,
+                    snippet=_normalize_text(result.get("body"), "(sem resumo)")[:MAX_SNIPPET_LENGTH],
                 )
             )
         return formatted_results
     except Exception:
-        # Mantém o contrato de retornar sempre uma lista
-        logger.exception("Erro ao executar web_search(query=%r, max_results=%r)", query, max_results)
+        # Mantem o contrato de sempre retornar lista.
+        logger.exception("Erro ao executar web_search(query=%r, max_results=%r)", normalized_query, limit)
         return [WebSearchResult(error="Falha na busca no DuckDuckGo.")]
 
 
 def format_results(results: list[WebSearchResult]) -> str:
-    """Formata resultados para injetar no contexto do LLM."""
+    """Formata resultados para o contexto do LLM."""
     if not results:
         return "Nenhum resultado encontrado."
 
-    first = results[0]
-    if "error" in first and first.get("error"):
-        return f"Erro na busca: {first['error']}"
+    valid_results = [result for result in results if not result.get("error")]
+    if not valid_results:
+        first_error = next((result.get("error") for result in results if result.get("error")), None)
+        return f"Erro na busca: {first_error or 'Falha desconhecida na busca.'}"
 
     lines: list[str] = []
-    for i, r in enumerate(results, 1):
-        title = r.get("title", "(sem título)")
-        snippet = r.get("snippet", "").strip() or "(sem resumo)"
-        url = r.get("url", "(sem URL)")
+    for i, result in enumerate(valid_results, 1):
+        title = result.get("title", "(sem titulo)")
+        snippet = result.get("snippet", "").strip() or "(sem resumo)"
+        url = result.get("url", "(sem URL)")
         lines.append(f"{i}. {title}\n   {snippet}\n   {url}")
 
     return "\n\n".join(lines)
