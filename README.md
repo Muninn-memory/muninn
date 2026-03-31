@@ -13,6 +13,9 @@ Na mitologia nórdica, Muninn e Huginn são os corvos de Odin — *memória* e *
 | **`huginn_pipeline.py`** | Pipeline compartilhado de Huginn: tradução da query, busca (DuckDuckGo), resumo DeepSeek, gravação opcional na memória via MCP. Usado pelo CLI e pelo bot Telegram. |
 | **`mcp_server.py`** | Servidor MCP em **stdio** (JSON-RPC linha a linha): memórias e conversas no Supabase; ferramentas de calendário e tarefas quando o Google está configurado. |
 | **`huginn.py`** | Bot Telegram: palavra-chave configurável dispara busca web; `/memoria` consulta memórias; resumos podem ser salvos no Muninn. |
+| **`ravens_gui.py`** | GUI nativa (CustomTkinter, tema dark) para operar Muninn/Huginn com output em tempo real e envio de stdin para modos interativos. |
+| **`launch_ravens.bat`** | Launcher Windows: valida projeto/venv, instala `customtkinter` se ausente e abre a GUI com `pythonw.exe` (sem console). |
+| **`setup_desktop.bat`** | Script Windows para criar/atualizar atalho `.lnk` na área de trabalho apontando para `launch_ravens.bat`. |
 
 ## Requisitos
 
@@ -136,6 +139,49 @@ python muninn.py memory list
 
 O comando `muninn chat` inicia o loop de conversa; o modelo **Claude** usa o servidor MCP para memória, conversas, calendário e tarefas. Com **DeepSeek**, use `--deepseek-mode chat` (padrão, `deepseek-chat`) ou `--deepseek-mode reasoner` (`deepseek-reasoner`) para tarefas mais exigentes; com `--model claude`, o modo reasoner é ignorado (apenas DeepSeek).
 
+### GUI Windows (Ravens Control Panel)
+
+A GUI desktop fica na raiz do projeto:
+
+- `ravens_gui.py`
+- `launch_ravens.bat`
+- `setup_desktop.bat`
+
+Fluxo recomendado no Windows:
+
+```powershell
+cd caminho\para\muninn
+setup_desktop.bat
+```
+
+Isso cria/atualiza o atalho `Ravens Control Panel` na area de trabalho.
+Use o atalho para abrir a GUI sem janela de terminal.
+
+Na primeira execucao, `launch_ravens.bat` valida o `.venv` local e instala
+`customtkinter` automaticamente se necessario.
+
+Recursos da GUI:
+
+- Seleciona Muninn/Huginn e comando alvo.
+- Configura argumentos dinamicos antes de executar.
+- Exibe output em tempo real.
+- Envia stdin para modos interativos (`muninn chat`, `huginn chat`, `mcp server`).
+- Persiste historico em `.ravens_history.json` com reexecucao por clique.
+
+Observacao: o historico salva um trecho de output (ultimos 2000 caracteres)
+por execucao para consulta rapida.
+
+#### Implementações desta sessão (GUI + launcher)
+
+- `ravens_gui.py` com layout em dois painéis (controles + output), tema dark e execução de comandos Muninn/Huginn.
+- Execução de subprocesso não bloqueante com `thread + queue`, exibindo stdout em tempo real na interface.
+- `stdin forwarding` para modos interativos (`muninn chat`, `huginn chat`, `mcp server`) pela caixa "Send".
+- Histórico persistente em `.ravens_history.json` com timestamp, bot, comando, argumentos, `exit_code` e snippet de output.
+- Clique no histórico para reexecutar; se já houver processo rodando, a GUI pede confirmação antes de trocar.
+- `launch_ravens.bat` autodetecta a pasta do projeto pelo local do próprio `.bat` (sem `PROJECT_DIR` manual).
+- `setup_desktop.bat` cria/atualiza o atalho de desktop de forma idempotente.
+- `.ravens_history.json` foi adicionado ao `.gitignore`.
+
 ### Bot Telegram (Huginn)
 
 ```powershell
@@ -170,6 +216,10 @@ Em uso normal, **não é obrigatório** abrir um terminal só para o `mcp_server
 | `huginn_tools.py` | Busca web (ex.: DuckDuckGo) e formatação |
 | `muninn_bridge.py` | Cliente MCP usado pelo pipeline Huginn para memória |
 | `google_auth.py` / `google_tools.py` | OAuth e operações Google |
+| `ravens_gui.py` | GUI desktop para operação de Muninn/Huginn |
+| `launch_ravens.bat` | Inicializa GUI no Windows sem console |
+| `setup_desktop.bat` | Cria/atualiza atalho na área de trabalho |
+| `.ravens_history.json` | Histórico persistente da GUI (gerado automaticamente) |
 
 ## Segurança
 

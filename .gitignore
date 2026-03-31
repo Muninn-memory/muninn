@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 credentials.json
 token.json
+.ravens_history.json
