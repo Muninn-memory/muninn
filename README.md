@@ -28,6 +28,7 @@ Na mitologia nórdica, Muninn e Huginn são os corvos de Odin — *memória* e *
 cd caminho\para\muninn
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+& "C:\Users\klaus\Projects\Forja de Artigos Acadêmicos\.venv\Scripts\Activate.ps1" (powershell)
 pip install -r requirements.txt
 ```
 
@@ -169,71 +170,6 @@ Em uso normal, **não é obrigatório** abrir um terminal só para o `mcp_server
 | `huginn_tools.py` | Busca web (ex.: DuckDuckGo) e formatação |
 | `muninn_bridge.py` | Cliente MCP usado pelo pipeline Huginn para memória |
 | `google_auth.py` / `google_tools.py` | OAuth e operações Google |
-
-## Boas práticas e debug (hardening)
-
-Esta seção resume os cuidados recomendados após o hardening recente (adapter MCP compartilhado, tratamento de erros e testes).
-
-### 1) Fluxo de qualidade recomendado
-
-Rode localmente os mesmos checks da CI:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt ruff
-ruff check . --select E9,F63,F7,F82
-python -m unittest discover -s tests -p "test_*.py" -v
-```
-
-### 2) Boas práticas de manutenção
-
-- Mantenha chamadas MCP passando sempre pelo adapter (`mcp_client.py`), evitando duplicar subprocesso/handshake em outros módulos.
-- Preserve o contrato atual de resiliência no app (`call_mcp_tool`/`call_muninn`): falha de MCP não derruba o chat, mas deve gerar log com contexto.
-- Evite `except Exception` em parsing local (JSON/estrutura). Prefira exceções específicas (`json.JSONDecodeError`, `TypeError`, `KeyError`, etc.).
-- Em boundaries externos (rede/API), fallback é permitido, mas com logging explícito.
-- Ao alterar `google_tools.py`, mantenha API pública estável (`create_event`, `list_events`, `delete_event`, `update_event`, `create_task`, `list_tasks`).
-
-### 3) Novos códigos de erro MCP (internos)
-
-O adapter `mcp_client.py` padroniza falhas em exceções tipadas:
-
-- `McpClientTimeoutError`: timeout aguardando resposta do processo MCP.
-- `McpClientProtocolError`: resposta MCP malformada/inválida.
-- `McpClientProcessError`: processo MCP finalizou com erro antes de retorno válido.
-
-No `muninn.py` e `muninn_bridge.py`, essas falhas são capturadas para manter compatibilidade de runtime (retorno vazio + log).
-
-### 4) Playbook rápido de debug
-
-1. **Falha em memória/eventos/tarefas no chat**  
-   - Verifique `.env` (`SUPABASE_URL`, `SUPABASE_KEY`, chaves Google).  
-   - Teste o servidor MCP isolado:
-   ```powershell
-   python mcp_server.py
-   ```
-2. **Saída vazia em tool call do Muninn/Huginn**  
-   - Rode os testes de MCP:
-   ```powershell
-   python -m unittest tests/test_mcp_client.py -v
-   ```
-   - Revise logs de erro em `muninn.py`/`muninn_bridge.py` para identificar se foi timeout, protocolo ou processo.
-3. **Regressão em integração Google**  
-   - Rode testes focados:
-   ```powershell
-   python -m unittest tests/test_google_tools.py -v
-   ```
-4. **Regressão no parser/fallback do Muninn**  
-   - Rode:
-   ```powershell
-   python -m unittest tests/test_muninn.py -v
-   ```
-
-### 5) CI
-
-A pipeline mínima está em `.github/workflows/ci.yml` e executa:
-
-- lint crítico com `ruff` (`E9`, `F63`, `F7`, `F82`);
-- suíte `unittest` em `tests/`.
 
 ## Segurança
 
