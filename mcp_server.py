@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 from dotenv import load_dotenv
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -10,6 +11,7 @@ load_dotenv()
 
 supabase: Client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 server = Server("muninn-memory")
+logger = logging.getLogger(__name__)
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
@@ -158,8 +160,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         else:
             return [TextContent(type="text", text=f"Ferramenta desconhecida: {name}")]
 
-    except Exception as e:
-        return [TextContent(type="text", text=f"Erro: {str(e)}")]
+    except (KeyError, TypeError, ValueError) as exc:
+        logger.warning("Erro de entrada em tool=%s: %s", name, exc)
+        return [TextContent(type="text", text=f"Erro de entrada: {exc}")]
+    except Exception:
+        logger.exception("Erro inesperado em tool=%s", name)
+        return [TextContent(type="text", text="Erro interno ao executar ferramenta.")]
 
 
 async def main():

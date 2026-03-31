@@ -138,17 +138,6 @@ def list_tasks(max_results: int = 10) -> list:
         for t in result.get("items", [])
     ]
 
-
-def delete_event(google_event_id: str) -> bool:
-    """Deleta um evento pelo ID."""
-    service = get_calendar_service()
-    service.events().delete(
-        calendarId=MUNINN_EMAIL,
-        eventId=google_event_id
-    ).execute()
-    return True
-
-
 def update_event(google_event_id: str, title: str = None, start: str = None,
                  end: str = None, description: str = None,
                  location: str = None) -> dict:
