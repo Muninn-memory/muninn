@@ -511,7 +511,9 @@ class RavensApp(ctk.CTk):
         command = self.command_var.get()
         cfg = COMMANDS[bot][command]
 
-        argv = [self.python_path, "-u", *cfg.base_args]
+        # Force UTF-8 mode in child Python processes on Windows so accents
+        # from Rich/CLI output are decoded consistently in this GUI.
+        argv = [self.python_path, "-X", "utf8", "-u", *cfg.base_args]
         for arg in cfg.args:
             value = arg_values.get(arg.key, "").strip()
             if not value:
@@ -543,6 +545,9 @@ class RavensApp(ctk.CTk):
                 key = key.strip()
                 value = value.strip().strip('"').strip("'")
                 env.setdefault(key, value)
+        # Keep child subprocess stdio in UTF-8 to avoid mojibake/replacement chars.
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
         return env
 
     def _run_current_selection(self) -> None:
@@ -831,4 +836,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
