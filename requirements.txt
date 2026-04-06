@@ -12,3 +12,9 @@ google-api-python-client
 python-dateutil
 ddgs
 python-telegram-bot
+fastapi
+uvicorn[standard]
+httpx
+playwright
+browser-use
+playwright-stealth

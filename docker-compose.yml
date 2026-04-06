@@ -13,11 +13,18 @@ services:
   huginn:
     build: .
     container_name: huginn
-    command: python huginn.py
+    command: python cli.py huginn server
+    ports:
+      - "8000:8000"
     volumes:
       - ./.env:/app/.env:ro
       - ./credentials.json:/app/credentials.json:ro
       - ./token.json:/app/token.json:rw
+      - ./logs:/app/logs
+      - ./huginn_sessions:/app/huginn_sessions
+    environment:
+      - DISPLAY=:99
+      - PYTHONUTF8=1
     restart: unless-stopped
     depends_on:
       - muninn

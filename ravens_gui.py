@@ -20,6 +20,8 @@ import subprocess
 import sys
 import threading
 import uuid
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -45,6 +47,7 @@ PROJECT_DIR = Path(__file__).resolve().parent
 HISTORY_FILE = PROJECT_DIR / ".ravens_history.json"
 MAX_HISTORY = 50
 OUTPUT_SNIPPET_CHARS = 2000
+DEFAULT_DISPATCH_ENDPOINT = "http://localhost:8000/task"
 
 
 def resolve_python_executable() -> str:
@@ -149,6 +152,12 @@ COMMANDS: dict[str, dict[str, CommandDef]] = {
         ),
     },
     "Huginn": {
+        "server": CommandDef(
+            description="Run Huginn FastAPI server (webhooks + /task).",
+            base_args=("-m", "uvicorn", "huginn.server:app", "--host", "0.0.0.0", "--port", "8000"),
+            interactive=False,
+            args=(),
+        ),
         "terminal chat": CommandDef(
             description="Terminal REPL for web search and summaries.",
             base_args=("cli.py", "huginn", "chat"),
@@ -246,6 +255,8 @@ class RavensApp(ctk.CTk):
         self.bot_var = ctk.StringVar(value=next(iter(COMMANDS.keys())))
         self.command_var = ctk.StringVar(value="")
         self.status_var = ctk.StringVar(value="Ready.")
+        self.dispatch_channel_var = ctk.StringVar(value="interno")
+        self.dispatch_busy = False
 
         self._build_ui()
         self._configure_output_tags()
@@ -356,7 +367,7 @@ class RavensApp(ctk.CTk):
         right.grid(row=0, column=1, sticky="nsew", padx=(8, 12), pady=10)
         right.grid_columnconfigure(0, weight=1)
         right.grid_rowconfigure(1, weight=4)
-        right.grid_rowconfigure(5, weight=1)
+        right.grid_rowconfigure(4, weight=1)
 
         out_head = ctk.CTkFrame(right, fg_color="transparent")
         out_head.grid(row=0, column=0, sticky="ew", pady=(0, 4))
@@ -420,17 +431,71 @@ class RavensApp(ctk.CTk):
         )
         self.stdin_button.grid(row=0, column=1)
 
+        self.bottom_tabs = ctk.CTkTabview(right)
+        self.bottom_tabs.grid(row=4, column=0, sticky="nsew", pady=(0, 2))
+
+        history_tab = self.bottom_tabs.add("History")
+        history_tab.grid_columnconfigure(0, weight=1)
+        history_tab.grid_rowconfigure(1, weight=1)
+
         ctk.CTkLabel(
-            right,
-            text="HISTORY (click to re-run)",
-            font=ctk.CTkFont(size=10, weight="bold"),
+            history_tab,
+            text="Click an entry to re-run",
+            font=ctk.CTkFont(size=10),
             text_color="gray",
             anchor="w",
-        ).grid(row=4, column=0, sticky="ew", pady=(0, 2))
+        ).grid(row=0, column=0, sticky="ew", pady=(2, 2), padx=4)
 
-        self.history_frame = ctk.CTkScrollableFrame(right, fg_color="#101010", height=160)
-        self.history_frame.grid(row=5, column=0, sticky="nsew")
+        self.history_frame = ctk.CTkScrollableFrame(history_tab, fg_color="#101010", height=160)
+        self.history_frame.grid(row=1, column=0, sticky="nsew")
         self.history_frame.grid_columnconfigure(0, weight=1)
+
+        dispatch_tab = self.bottom_tabs.add("Dispatch")
+        dispatch_tab.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            dispatch_tab,
+            text="Task",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 2))
+        self.dispatch_task_box = ctk.CTkTextbox(dispatch_tab, height=90, wrap="word")
+        self.dispatch_task_box.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
+
+        channel_row = ctk.CTkFrame(dispatch_tab, fg_color="transparent")
+        channel_row.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 4))
+        channel_row.grid_columnconfigure((1, 3), weight=1)
+        ctk.CTkLabel(channel_row, text="Channel", width=70).grid(row=0, column=0, sticky="w")
+        self.dispatch_channel_combo = ctk.CTkComboBox(
+            channel_row,
+            values=["interno", "telegram", "whatsapp", "instagram"],
+            variable=self.dispatch_channel_var,
+        )
+        self.dispatch_channel_combo.grid(row=0, column=1, sticky="ew", padx=(6, 12))
+        ctk.CTkLabel(channel_row, text="Sender", width=70).grid(row=0, column=2, sticky="w")
+        self.dispatch_sender_entry = ctk.CTkEntry(
+            channel_row,
+            placeholder_text="chat/user id (optional)",
+        )
+        self.dispatch_sender_entry.grid(row=0, column=3, sticky="ew", padx=(6, 0))
+
+        endpoint_row = ctk.CTkFrame(dispatch_tab, fg_color="transparent")
+        endpoint_row.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 6))
+        endpoint_row.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(endpoint_row, text="Endpoint", width=70).grid(row=0, column=0, sticky="w")
+        self.dispatch_endpoint_entry = ctk.CTkEntry(endpoint_row)
+        self.dispatch_endpoint_entry.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        self.dispatch_endpoint_entry.insert(0, DEFAULT_DISPATCH_ENDPOINT)
+
+        self.dispatch_button = ctk.CTkButton(
+            dispatch_tab,
+            text="Enviar para Huginn",
+            command=self._dispatch_task_clicked,
+            fg_color="#2b5da8",
+            hover_color="#204a86",
+            height=36,
+        )
+        self.dispatch_button.grid(row=4, column=0, sticky="ew", padx=8, pady=(2, 8))
 
     def _configure_output_tags(self) -> None:
         text = self.output_box._textbox
@@ -646,6 +711,8 @@ class RavensApp(ctk.CTk):
                 elif kind == "done" and not self.done_guard:
                     self.done_guard = True
                     self._on_process_done(int(payload))
+                elif kind == "dispatch_done":
+                    self._on_dispatch_done(str(payload))
         except queue.Empty:
             pass
         self.after(60, self._poll_output_queue)
@@ -703,6 +770,88 @@ class RavensApp(ctk.CTk):
             self._write_output(f">> {text}\n", "stdin")
         except Exception:
             self._write_output("[ERROR] stdin is not available.\n", "err")
+
+    def _dispatch_task_clicked(self) -> None:
+        if self.dispatch_busy:
+            return
+
+        task = self.dispatch_task_box.get("1.0", "end").strip()
+        if not task:
+            self._write_output("[ERROR] Dispatch task is empty.\n", "err")
+            return
+
+        endpoint = self.dispatch_endpoint_entry.get().strip() or DEFAULT_DISPATCH_ENDPOINT
+        channel = self.dispatch_channel_var.get().strip().lower() or "interno"
+        sender = self.dispatch_sender_entry.get().strip()
+
+        self.dispatch_busy = True
+        self.dispatch_button.configure(state="disabled")
+        self.status_var.set(f"Dispatching task to {channel}...")
+        self._write_output(f"\n[DISPATCH] {channel} -> {endpoint}\n", "cmd")
+
+        threading.Thread(
+            target=self._dispatch_worker,
+            args=(task, channel, sender, endpoint),
+            daemon=True,
+        ).start()
+
+    def _dispatch_worker(self, task: str, channel: str, sender: str, endpoint: str) -> None:
+        payload = {
+            "task": task,
+            "channel": channel,
+            "sender": sender or "dispatch",
+            "session_id": "",
+            "metadata": {"source": "ravens_gui"},
+        }
+        request_data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            endpoint,
+            data=request_data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=240) as response:
+                body = response.read().decode("utf-8", errors="replace")
+            parsed: Any
+            try:
+                parsed = json.loads(body)
+            except json.JSONDecodeError:
+                parsed = {"raw": body}
+
+            session = ""
+            answer = ""
+            if isinstance(parsed, dict):
+                session = str(parsed.get("session_id", "") or "")
+                answer = str(parsed.get("answer", "") or parsed.get("response", "") or "")
+            if not answer:
+                if isinstance(parsed, (dict, list)):
+                    answer = json.dumps(parsed, ensure_ascii=False, indent=2)
+                else:
+                    answer = str(parsed)
+
+            self.output_queue.put(("line", f"[DISPATCH] session={session or 'n/a'}\n"))
+            self.output_queue.put(("line", f"{answer}\n"))
+            self.output_queue.put(("dispatch_done", "Dispatch completed."))
+        except urllib.error.HTTPError as exc:
+            error_body = ""
+            try:
+                error_body = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                error_body = ""
+            self.output_queue.put(
+                ("line", f"[DISPATCH-ERROR] HTTP {exc.code}: {error_body or exc.reason}\n")
+            )
+            self.output_queue.put(("dispatch_done", "Dispatch failed."))
+        except Exception as exc:
+            self.output_queue.put(("line", f"[DISPATCH-ERROR] {exc}\n"))
+            self.output_queue.put(("dispatch_done", "Dispatch failed."))
+
+    def _on_dispatch_done(self, status: str) -> None:
+        self.dispatch_busy = False
+        self.dispatch_button.configure(state="normal")
+        self.status_var.set(status)
 
     def _clear_output(self) -> None:
         self.output_box.configure(state="normal")

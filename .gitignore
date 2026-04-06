@@ -5,3 +5,7 @@ __pycache__/
 credentials.json
 token.json
 .ravens_history.json
+logs/
+huginn_sessions/
+tests/_tmp_huginn_logs/
+tmphr7ez0p2/

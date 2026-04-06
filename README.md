@@ -130,6 +130,29 @@ python cli.py memory search "texto"
 python cli.py huginn chat
 ```
 
+**Huginn server (FastAPI)**:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+$env:PYTHONUTF8 = "1"
+python cli.py huginn server
+```
+
+Quando `BROWSER_TOOLS=true`, o startup do servidor valida Playwright/Chromium.
+Se o Chromium nao estiver instalado, o servidor falha de forma explicita.
+Correcao:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+playwright install chromium
+```
+
+Leitura correta do arquivo de log no PowerShell:
+
+```powershell
+Get-Content .\logs\huginn.log -Encoding UTF8 -Wait -Tail 50
+```
+
 Também pode executar o módulo Muninn diretamente:
 
 ```powershell

@@ -4,6 +4,7 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y \
     locales \
+    xvfb \
     && locale-gen pt_BR.UTF-8 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -14,7 +15,9 @@ ENV LC_ALL=pt_BR.UTF-8
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+RUN playwright install chromium
+RUN playwright install-deps chromium
 
-COPY *.py .
+COPY . .
 
-CMD ["python", "cli.py", "chat"]
+CMD ["python", "-m", "uvicorn", "huginn.server:app", "--host", "0.0.0.0", "--port", "8000"]
