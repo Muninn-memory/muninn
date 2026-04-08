@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -10,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from huginn.agent import arun
+from huginn.channels.base import ChannelAdapter, HuginnMessage
 from huginn.channels.instagram import InstagramChannel
 from huginn.channels.telegram import TelegramChannel
 from huginn.channels.whatsapp import WhatsAppChannel
@@ -26,6 +28,8 @@ STARTED_AT = datetime.now(timezone.utc)
 _telegram_channel: TelegramChannel | None = None
 _whatsapp_channel: WhatsAppChannel | None = None
 _instagram_channel: InstagramChannel | None = None
+_whatsapp_task: asyncio.Task[None] | None = None
+_instagram_task: asyncio.Task[None] | None = None
 
 
 class TaskRequest(BaseModel):
@@ -85,8 +89,12 @@ def _build_status() -> dict[str, Any]:
         },
         "channels_runtime": {
             "telegram": _telegram_channel is not None,
-            "whatsapp": _whatsapp_channel is not None,
-            "instagram": _instagram_channel is not None,
+            "whatsapp": _whatsapp_channel is not None
+            and _whatsapp_task is not None
+            and not _whatsapp_task.done(),
+            "instagram": _instagram_channel is not None
+            and _instagram_task is not None
+            and not _instagram_task.done(),
         },
     }
 
@@ -100,6 +108,17 @@ def _get_telegram_channel() -> TelegramChannel:
     if _telegram_channel is None:
         _telegram_channel = TelegramChannel(agent_runner=_agent_runner, status_provider=_build_status)
     return _telegram_channel
+
+
+def _get_channel_adapter(channel_name: str) -> ChannelAdapter | None:
+    channel = (channel_name or "").strip().lower()
+    if channel == "telegram":
+        return _get_telegram_channel()
+    if channel == "whatsapp":
+        return _whatsapp_channel
+    if channel == "instagram":
+        return _instagram_channel
+    return None
 
 
 async def _telegram_alert(message: str) -> None:
@@ -118,23 +137,118 @@ def _init_optional_channels() -> None:
     if settings.whatsapp_enabled and _whatsapp_channel is None:
         _whatsapp_channel = WhatsAppChannel(
             session_dir=settings.whatsapp_session_dir,
+            headless=settings.browser_headless,
+            poll_interval=10.0,
+            on_message=_handle_channel_message,
             alert_callback=_telegram_alert,
+            allowed_sender=settings.whatsapp_allowed_sender,
         )
     if settings.instagram_enabled and _instagram_channel is None:
         _instagram_channel = InstagramChannel(
             session_dir=settings.instagram_session_dir,
+            headless=settings.browser_headless,
+            poll_interval=10.0,
+            on_message=_handle_channel_message,
             alert_callback=_telegram_alert,
+            username=settings.instagram_username,
+            password=settings.instagram_password,
         )
+
+
+async def _handle_channel_message(message: HuginnMessage) -> None:
+    sid = (message.session_id or "").strip() or f"{message.channel}-{uuid.uuid4().hex[:12]}"
+    channel = (message.channel or "").strip().lower() or "internal"
+    sender = (message.sender or "").strip() or "unknown"
+    task = (message.text or "").strip()
+    if not task:
+        logger.warning("[%s] CHANNEL empty message channel=%s sender=%s", sid, channel, sender)
+        return
+
+    logger.info(
+        "[%s] CHANNEL start channel=%s sender=%s task=%.120r",
+        sid,
+        channel,
+        sender,
+        task,
+    )
+    started = time.perf_counter()
+    try:
+        answer = await arun(task, session_id=sid, channel=channel)
+        adapter = _get_channel_adapter(channel)
+        if adapter is None:
+            logger.warning("[%s] CHANNEL adapter missing channel=%s", sid, channel)
+            return
+
+        recipient = str(message.metadata.get("recipient", "")).strip() or sender
+        await adapter.send_message(recipient, answer)
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        logger.info("[%s] CHANNEL done channel=%s elapsed=%.1fms", sid, channel, elapsed_ms)
+    except Exception:
+        logger.exception("[%s] CHANNEL error channel=%s sender=%s", sid, channel, sender)
+
+
+async def _start_channel(
+    channel_name: str,
+    channel: ChannelAdapter | None,
+) -> tuple[ChannelAdapter | None, asyncio.Task[None] | None]:
+    if channel is None:
+        return None, None
+    try:
+        await channel.start()
+        task = asyncio.create_task(channel.run_poll_loop(), name=f"huginn-{channel_name}-poll")
+        logger.info("CHANNEL startup ok channel=%s", channel_name)
+        return channel, task
+    except Exception:
+        logger.exception("CHANNEL startup error channel=%s", channel_name)
+        try:
+            await channel.stop()
+        except Exception:
+            logger.exception("CHANNEL cleanup error channel=%s", channel_name)
+        return None, None
+
+
+async def _stop_channel(
+    channel_name: str,
+    channel: ChannelAdapter | None,
+    task: asyncio.Task[None] | None,
+) -> None:
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("CHANNEL poll stop error channel=%s", channel_name)
+    if channel is not None:
+        try:
+            await channel.stop()
+        except Exception:
+            logger.exception("CHANNEL stop error channel=%s", channel_name)
 
 
 @app.on_event("startup")
 async def startup_event() -> None:
+    global _whatsapp_channel, _instagram_channel, _whatsapp_task, _instagram_task
     settings = get_settings()
     if settings.browser_tools_enabled:
         logger.info("BROWSER preflight start headless=%s", settings.browser_headless)
         await preflight_browser_runtime(headless=settings.browser_headless)
         logger.info("BROWSER preflight ok")
     _init_optional_channels()
+    _whatsapp_channel, _whatsapp_task = await _start_channel("whatsapp", _whatsapp_channel)
+    _instagram_channel, _instagram_task = await _start_channel("instagram", _instagram_channel)
+
+
+@app.on_event("shutdown")
+async def shutdown_event() -> None:
+    global _whatsapp_channel, _instagram_channel, _whatsapp_task, _instagram_task
+    await _stop_channel("whatsapp", _whatsapp_channel, _whatsapp_task)
+    await _stop_channel("instagram", _instagram_channel, _instagram_task)
+    _whatsapp_channel = None
+    _instagram_channel = None
+    _whatsapp_task = None
+    _instagram_task = None
 
 
 @app.get("/status")
@@ -158,11 +272,12 @@ async def run_task(request: TaskRequest) -> TaskResponse:
     elapsed_ms = (time.perf_counter() - started) * 1000.0
     logger.info("[%s] TASK done channel=%s elapsed=%.1fms", sid, channel, elapsed_ms)
 
-    if channel == "telegram" and request.sender.strip():
+    adapter = _get_channel_adapter(channel)
+    if adapter is not None and request.sender.strip():
         try:
-            await _get_telegram_channel().send_message(request.sender.strip(), answer)
+            await adapter.send_message(request.sender.strip(), answer)
         except Exception:
-            logger.exception("Falha ao enviar resposta para Telegram")
+            logger.exception("Falha ao enviar resposta para canal=%s", channel)
 
     return TaskResponse(
         session_id=sid,

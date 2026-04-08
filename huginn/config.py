@@ -88,6 +88,7 @@ class HuginnSettings:
     telegram_allowed_chat_id: int
     huginn_auth_keyword: str
     whatsapp_enabled: bool
+    whatsapp_allowed_sender: str
     whatsapp_session_dir: str
     instagram_enabled: bool
     instagram_username: str
@@ -162,6 +163,7 @@ def get_settings() -> HuginnSettings:
         telegram_allowed_chat_id=_as_int(os.getenv("TELEGRAM_ALLOWED_CHAT_ID"), default=0),
         huginn_auth_keyword=os.getenv("HUGINN_AUTH_KEYWORD", "wodan").strip().lower(),
         whatsapp_enabled=_as_bool(os.getenv("WHATSAPP_ENABLED"), default=False),
+        whatsapp_allowed_sender=os.getenv("WHATSAPP_ALLOWED_SENDER", "").strip(),
         whatsapp_session_dir=os.getenv(
             "WHATSAPP_SESSION_DIR", "./huginn_sessions/whatsapp"
         ).strip()

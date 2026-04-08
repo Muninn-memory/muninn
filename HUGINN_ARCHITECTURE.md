@@ -347,48 +347,56 @@ FASE 2 — AGENT LOOP:
 
 Controlado pela variável `HUGINN_MODE` no `.env`:
 
-| `HUGINN_MODE` | Orquestrador | Execução / deep_think | Boost / Validador |
-|---|---|---|---|
+
+| `HUGINN_MODE`           | Orquestrador  | Execução / deep_think    | Boost / Validador        |
+| ----------------------- | ------------- | ------------------------ | ------------------------ |
 | `deepseek_orchestrator` | DeepSeek-chat | DeepSeek-chat / reasoner | Claude Sonnet (opcional) |
-| `claude_orchestrator` | Claude Sonnet | DeepSeek-chat / reasoner | Claude Opus (opcional) |
+| `claude_orchestrator`   | Claude Sonnet | DeepSeek-chat / reasoner | Claude Opus (opcional)   |
+
 
 **Regra fixa:** sub-agentes (`spawn_subagent`, Fase 2 do roadmap) sempre usam DeepSeek-chat, independente do modo — para manter custo controlado.
 
 **Critérios de seleção dinâmica no loop (definidos no `soul.py`):**
 
-| Situação detectada pelo orquestrador | Ação |
-|---|---|
-| Pergunta factual, resumo, tradução | Responde direto, sem tool extra |
-| Raciocínio multi-passo, análise complexa | `deep_think` → DeepSeek-reasoner |
-| Navegação web necessária | `browser_navigate` → Playwright |
-| Contexto pessoal ou histórico necessário | `recall_memory` → Muninn MCP |
-| Tarefa isolada paralelizável | `spawn_subagent` → DeepSeek-chat (Fase 2) |
+
+| Situação detectada pelo orquestrador     | Ação                                      |
+| ---------------------------------------- | ----------------------------------------- |
+| Pergunta factual, resumo, tradução       | Responde direto, sem tool extra           |
+| Raciocínio multi-passo, análise complexa | `deep_think` → DeepSeek-reasoner          |
+| Navegação web necessária                 | `browser_navigate` → Playwright           |
+| Contexto pessoal ou histórico necessário | `recall_memory` → Muninn MCP              |
+| Tarefa isolada paralelizável             | `spawn_subagent` → DeepSeek-chat (Fase 2) |
+
 
 ---
 
 ## 7. Ferramentas do Agente
 
-| Tool | Arquivo | Descrição |
-|---|---|---|
-| `web_search` | `tools/web_search.py` | DuckDuckGo via `ddgs`, tradução + resumo DeepSeek |
-| `browser_navigate` | `tools/browser.py` | Playwright efêmero + LLM para navegação autônoma |
-| `recall_memory` | `tools/memory.py` | Busca semântica na memória via Muninn MCP |
-| `save_memory` | `tools/memory.py` | Grava nota/preferência/resultado no Supabase |
-| `check_calendar` | `tools/calendar.py` | Lista/cria eventos via Google Calendar MCP |
-| `send_message` | via `channels/` | Envia resposta no canal de origem da mensagem |
-| `deep_think` | `tools/deep_think.py` | Escalona para DeepSeek-reasoner e retorna resultado |
-| `spawn_subagent` | `agent.py` | **[STUB]** Instancia sub-loop DeepSeek — Fase 2 |
+
+| Tool               | Arquivo               | Descrição                                           |
+| ------------------ | --------------------- | --------------------------------------------------- |
+| `web_search`       | `tools/web_search.py` | DuckDuckGo via `ddgs`, tradução + resumo DeepSeek   |
+| `browser_navigate` | `tools/browser.py`    | Playwright efêmero + LLM para navegação autônoma    |
+| `recall_memory`    | `tools/memory.py`     | Busca semântica na memória via Muninn MCP           |
+| `save_memory`      | `tools/memory.py`     | Grava nota/preferência/resultado no Supabase        |
+| `check_calendar`   | `tools/calendar.py`   | Lista/cria eventos via Google Calendar MCP          |
+| `send_message`     | via `channels/`       | Envia resposta no canal de origem da mensagem       |
+| `deep_think`       | `tools/deep_think.py` | Escalona para DeepSeek-reasoner e retorna resultado |
+| `spawn_subagent`   | `agent.py`            | **[STUB]** Instancia sub-loop DeepSeek — Fase 2     |
+
 
 ---
 
 ## 8. Canais de Comunicação
 
 ### Telegram
+
 - Mantém `python-telegram-bot` com polling nativo
 - Não usa Playwright — é o canal mais estável e direto
 - Webhook registrado no `server.py` ou polling standalone
 
 ### WhatsApp Web + Instagram Web
+
 - Implementados via **Playwright com sessão persistente** — sem Meta API oficial
 - Primeiro acesso: login manual (QR code no WhatsApp, credenciais no Instagram)
 - Sessão salva em cookies/localStorage entre reinicializações
@@ -416,21 +424,25 @@ huginn/channels/instagram.py     ← extends SessionBrowser
 
 **Riscos e mitigações:**
 
-| Risco | Canal | Mitigação |
-|---|---|---|
-| Detecção de headless | WA / IG | `playwright-stealth` + Xvfb no Docker |
-| Sessão expirada | WA (QR periódico) | Re-auth automático + alerta no Telegram |
-| Rate limit / ban | WA / IG | Delay humano entre ações, randomização de timing |
-| WA — uma sessão por número | WA | Uma instância por número, sem execução paralela |
+
+| Risco                      | Canal             | Mitigação                                        |
+| -------------------------- | ----------------- | ------------------------------------------------ |
+| Detecção de headless       | WA / IG           | `playwright-stealth` + Xvfb no Docker            |
+| Sessão expirada            | WA (QR periódico) | Re-auth automático + alerta no Telegram          |
+| Rate limit / ban           | WA / IG           | Delay humano entre ações, randomização de timing |
+| WA — uma sessão por número | WA                | Uma instância por número, sem execução paralela  |
+
 
 ---
 
 ## 9. Roadmap de Implementação
 
 ### Fase 1 — Infraestrutura de providers e configuração
+
 **Arquivos:** `huginn/config.py`, `huginn/providers/` (base, claude, deepseek, factory), `huginn/logger.py`
 
 O que entrega:
+
 - Abstração de providers com `LLMProvider` ABC
 - Seleção de modelo por papel (orchestrator, boost, exec, validator)
 - `HUGINN_MODE` configurável via `.env`
@@ -439,9 +451,11 @@ O que entrega:
 ---
 
 ### Fase 2 — Soul (prompts)
+
 **Arquivos:** `huginn/soul.py`
 
 O que entrega:
+
 - `HUGINN_SYSTEM`: identidade do Huginn como agente autônomo distinto do Muninn
 - `PLANNER_SYSTEM`: instrução para fase de boost/planejamento
 - `VALIDATOR_SYSTEM`: instrução para fase de validação
@@ -450,9 +464,11 @@ O que entrega:
 ---
 
 ### Fase 3 — Tools
+
 **Arquivos:** `huginn/tools/` (registry, web_search, memory, calendar, deep_think)
 
 O que entrega:
+
 - `web_search`: `huginn_tools.py` atual migrado e integrado ao registry
 - `memory`: `muninn_bridge.py` expandido com recall, save, search
 - `calendar`: list e create via Muninn MCP
@@ -463,20 +479,24 @@ O que entrega:
 ---
 
 ### Fase 4 — Agent loop
+
 **Arquivo:** `huginn/agent.py`
 
 O que entrega:
+
 - Loop completo: boost → execução → validação → log
-- `AgentLoop` class com `run(task)` → itera tool calls até `__DONE__`
+- `AgentLoop` class com `run(task)` → itera tool calls até `__DONE_`_
 - Função `run(task, session_id, channel)` como ponto de entrada público
 - Compatível com chamada direta (CLI/testes) e via `server.py`
 
 ---
 
 ### Fase 5 — Migração do canal Telegram
+
 **Arquivos:** `huginn/channels/base.py`, `huginn/channels/telegram.py`, `huginn/server.py`
 
 O que entrega:
+
 - `HuginnMessage` dataclass normalizado
 - Bot Telegram migrado para `channels/telegram.py` com todos os comandos atuais (`/start`, `/ajuda`, `/muninn`, `/agenda`, `/tarefas`, `/lembrar`, `/memoria`, `/status`)
 - `server.py` FastAPI com endpoint `POST /task` (GUI dispatch) e webhook Telegram
@@ -485,9 +505,11 @@ O que entrega:
 ---
 
 ### Fase 6 — Browser agent (tools/browser.py)
+
 **Arquivo:** `huginn/tools/browser.py`
 
 O que entrega:
+
 - Playwright efêmero para tasks autônomas (Manus-like)
 - LLM-driven: recebe task em linguagem natural, navega e retorna resultado
 - Screenshot opcional para debug na GUI
@@ -497,9 +519,11 @@ O que entrega:
 ---
 
 ### Fase 7 — Canais WhatsApp e Instagram
+
 **Arquivos:** `huginn/channels/browser_base.py`, `huginn/channels/whatsapp.py`, `huginn/channels/instagram.py`
 
 O que entrega:
+
 - `SessionBrowser` base com login, persistência de sessão e polling
 - WhatsApp Web: login por QR code, polling via JS injection
 - Instagram Web: login por credenciais, polling periódico no inbox
@@ -509,9 +533,11 @@ O que entrega:
 ---
 
 ### Fase 8 — GUI Dispatch
+
 **Arquivo:** `ravens_gui.py` (nova aba)
 
 O que entrega:
+
 - Aba "Dispatch" na GUI Ravens
 - Campo de texto para task
 - Seleção de canal de destino (Telegram / WhatsApp / Instagram / interno)
@@ -521,9 +547,11 @@ O que entrega:
 ---
 
 ### Fase 9 — spawn_subagent (roadmap futuro)
+
 **Arquivo:** `huginn/agent.py` (expansão)
 
 O que entrega:
+
 - `AgentLoop` refatorado para async (`asyncio`)
 - `spawn_subagent(task, context)` instancia sub-loop DeepSeek-chat
 - `asyncio.gather()` para execução paralela de múltiplos sub-agentes
@@ -836,3 +864,4 @@ DEFAULT_MODEL=deepseek
 - [playwright-stealth](https://github.com/AtuboDad/playwright_stealth)
 - [FastAPI](https://fastapi.tiangolo.com/)
 - Muninn — `muninn.py`, `mcp_server.py`, `muninn_bridge.py`
+

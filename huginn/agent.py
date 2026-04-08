@@ -21,7 +21,6 @@ from huginn.tools.registry import (
 )
 
 logger = logging.getLogger("huginn.agent")
-logger.setLevel(logging.DEBUG)
 
 DONE_SENTINEL = "__DONE__"
 
@@ -338,14 +337,7 @@ class AgentLoop:
     async def run(self, task: str) -> str:
         task = (task or "").strip()
         if not task:
-            result = "Qual e a consulta, Mestre?"
-            logger.debug(
-                "[%s] AGENT FINAL RETURN type=%s value=%.500r",
-                self.session_id,
-                type(result).__name__,
-                result,
-            )
-            return result
+            return "Qual e a consulta, Mestre?"
         started = time.perf_counter()
         logger.info(
             "[%s] START task=%.120r channel=%s mode=%s",
@@ -388,35 +380,15 @@ class AgentLoop:
                 phase="finish",
                 note=f"cost_usd={self.session_logger.total_cost_usd:.8f}; tokens={self.session_logger.total_tokens}",
             )
-            logger.debug(
-                "[%s] AGENT FINAL RETURN type=%s value=%.500r",
-                self.session_id,
-                type(answer).__name__,
-                answer,
-            )
             return answer
         except ProviderConfigError as exc:
             logger.exception("[%s] UNHANDLED exception in agent loop", self.session_id)
             self.session_logger.add_event(phase="error", note=f"provider_config_error: {exc}")
-            result = f"Erro de configuracao do Huginn: {exc}"
-            logger.debug(
-                "[%s] AGENT FINAL RETURN type=%s value=%.500r",
-                self.session_id,
-                type(result).__name__,
-                result,
-            )
-            return result
+            return f"Erro de configuracao do Huginn: {exc}"
         except Exception as exc:  # pragma: no cover - safety net
             logger.exception("[%s] UNHANDLED exception in agent loop", self.session_id)
             self.session_logger.add_event(phase="error", note=str(exc))
-            result = "Falha interna no Huginn durante a execucao da tarefa."
-            logger.debug(
-                "[%s] AGENT FINAL RETURN type=%s value=%.500r",
-                self.session_id,
-                type(result).__name__,
-                result,
-            )
-            return result
+            return "Falha interna no Huginn durante a execucao da tarefa."
 
 
 async def arun(task: str, *, session_id: str | None = None, channel: str = "internal") -> str:

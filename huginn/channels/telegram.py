@@ -12,7 +12,6 @@ from huginn.tools.calendar import check_calendar, list_tasks
 from huginn.tools.memory import recall_memory, save_memory, search_memory
 
 logger = logging.getLogger("huginn.channels")
-logger.setLevel(logging.DEBUG)
 
 MAX_TELEGRAM_MESSAGE_LENGTH = 4000
 
@@ -208,12 +207,6 @@ class TelegramChannel(ChannelAdapter):
                 output = "Qual e a consulta, Mestre?"
             else:
                 result = await self._agent_runner(query, session_id, "telegram")
-                logger.debug(
-                    "[%s] AGENT RETURN type=%s value=%.500r",
-                    session_id,
-                    type(result).__name__,
-                    result,
-                )
                 output = str(result)
             await self._reply(reply_func=reply_func, chat_id=chat_id, text=output)
             return output
