@@ -147,7 +147,7 @@ def _init_optional_channels() -> None:
         _instagram_channel = InstagramChannel(
             session_dir=settings.instagram_session_dir,
             headless=settings.browser_headless,
-            poll_interval=10.0,
+            poll_interval=settings.instagram_poll_interval,
             on_message=_handle_channel_message,
             alert_callback=_telegram_alert,
             username=settings.instagram_username,

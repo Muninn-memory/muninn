@@ -8,7 +8,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import huginn.server as server
 from huginn.channels.base import HuginnMessage
@@ -401,16 +401,68 @@ class InstagramChannelTests(unittest.IsolatedAsyncioTestCase):
                 username="user",
                 password="pass",
             )
-            channel._page = SimpleNamespace(goto=AsyncMock())
+            channel._page = SimpleNamespace(
+                goto=AsyncMock(),
+                url="https://www.instagram.com/direct/inbox/",
+            )
             channel._restore_local_storage = AsyncMock()  # type: ignore[method-assign]
             channel._wait_for_any_selector = AsyncMock(return_value=True)  # type: ignore[method-assign]
             self.assertTrue(await channel.verify_auth())
             channel._restore_local_storage.assert_awaited_once()
 
-            channel._page = SimpleNamespace(goto=AsyncMock(side_effect=RuntimeError("boom")))
+            channel._page = SimpleNamespace(
+                goto=AsyncMock(side_effect=RuntimeError("boom")),
+                url="https://www.instagram.com/direct/inbox/",
+            )
             channel._restore_local_storage = AsyncMock()  # type: ignore[method-assign]
             self.assertFalse(await channel.verify_auth())
             channel._restore_local_storage.assert_not_called()
+
+    async def test_verify_auth_checkpoint_returns_false_and_alerts(self) -> None:
+        alert = AsyncMock()
+        with _tmp_session_dir() as td:
+            channel = InstagramChannel(
+                session_dir=td,
+                on_message=_noop_on_message,
+                alert_callback=alert,
+                username="user",
+                password="pass",
+            )
+            channel._page = SimpleNamespace(
+                goto=AsyncMock(),
+                url="https://www.instagram.com/challenge/abc",
+            )
+            channel._restore_local_storage = AsyncMock()  # type: ignore[method-assign]
+            channel._wait_for_any_selector = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+            ok = await channel.verify_auth()
+
+            self.assertFalse(ok)
+            alert.assert_awaited_once()
+            channel._wait_for_any_selector.assert_not_called()
+
+    async def test_login_checkpoint_raises_runtime_error(self) -> None:
+        alert = AsyncMock()
+        with _tmp_session_dir() as td:
+            channel = InstagramChannel(
+                session_dir=td,
+                on_message=_noop_on_message,
+                alert_callback=alert,
+                username="user",
+                password="pass",
+            )
+            channel._page = SimpleNamespace(
+                goto=AsyncMock(),
+                fill=AsyncMock(),
+                click=AsyncMock(),
+                wait_for_timeout=AsyncMock(),
+                url="https://www.instagram.com/challenge/abc",
+            )
+
+            with self.assertRaises(RuntimeError):
+                await channel.login()
+
+            alert.assert_awaited_once()
 
     async def test_verify_auth_restores_storage_before_selector_check(self) -> None:
         with _tmp_session_dir() as td:
@@ -432,7 +484,10 @@ class InstagramChannelTests(unittest.IsolatedAsyncioTestCase):
                 call_order.append("wait")
                 return True
 
-            channel._page = SimpleNamespace(goto=AsyncMock(side_effect=_goto))
+            channel._page = SimpleNamespace(
+                goto=AsyncMock(side_effect=_goto),
+                url="https://www.instagram.com/direct/inbox/",
+            )
             channel._restore_local_storage = AsyncMock(side_effect=_restore)  # type: ignore[method-assign]
             channel._wait_for_any_selector = AsyncMock(side_effect=_wait)  # type: ignore[method-assign]
 
@@ -440,7 +495,7 @@ class InstagramChannelTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(ok)
             self.assertEqual(call_order, ["goto", "restore", "wait"])
 
-    async def test_poll_messages_dedupes_threads(self) -> None:
+    async def test_poll_messages_returns_full_text_for_unread_threads(self) -> None:
         with _tmp_session_dir() as td:
             channel = InstagramChannel(
                 session_dir=td,
@@ -450,20 +505,110 @@ class InstagramChannelTests(unittest.IsolatedAsyncioTestCase):
             )
             channel._page = SimpleNamespace(
                 goto=AsyncMock(),
-                evaluate=AsyncMock(
-                    return_value=[
-                        {"id": "th1", "sender": "alice", "text": "msg1"},
-                        {"id": "th1", "sender": "alice", "text": "msg1 dup"},
-                    ]
-                ),
+                url="https://www.instagram.com/direct/inbox/",
             )
+            channel._restore_local_storage = AsyncMock()  # type: ignore[method-assign]
+            channel._collect_unread_threads = AsyncMock(  # type: ignore[method-assign]
+                return_value=[{"thread_id": "th1", "sender": "alice"}]
+            )
+            channel._extract_latest_inbound_text = AsyncMock(  # type: ignore[method-assign]
+                return_value="mensagem completa da thread"
+            )
+            channel._persist_seen_ids = Mock()  # type: ignore[method-assign]
+
+            messages = await channel.poll_messages()
+
+            self.assertEqual(len(messages), 1)
+            self.assertEqual(messages[0].text, "mensagem completa da thread")
+            self.assertEqual(messages[0].metadata.get("thread_id"), "th1")
+            channel._extract_latest_inbound_text.assert_awaited_once_with("th1", "alice")
+
+    async def test_poll_messages_dedupe_with_intersection(self) -> None:
+        with _tmp_session_dir() as td:
+            channel = InstagramChannel(
+                session_dir=td,
+                on_message=_noop_on_message,
+                username="user",
+                password="pass",
+            )
+            channel._page = SimpleNamespace(
+                goto=AsyncMock(),
+                url="https://www.instagram.com/direct/inbox/",
+            )
+            channel._restore_local_storage = AsyncMock()  # type: ignore[method-assign]
+            channel._collect_unread_threads = AsyncMock(  # type: ignore[method-assign]
+                side_effect=[
+                    [{"thread_id": "th1", "sender": "alice"}],
+                    [{"thread_id": "th1", "sender": "alice"}],
+                    [],
+                    [{"thread_id": "th1", "sender": "alice"}],
+                ]
+            )
+            channel._extract_latest_inbound_text = AsyncMock(  # type: ignore[method-assign]
+                side_effect=["msg-1", "msg-2"]
+            )
+            channel._persist_seen_ids = Mock()  # type: ignore[method-assign]
 
             first = await channel.poll_messages()
             second = await channel.poll_messages()
+            third = await channel.poll_messages()
+            fourth = await channel.poll_messages()
 
             self.assertEqual(len(first), 1)
-            self.assertEqual(first[0].sender, "alice")
             self.assertEqual(len(second), 0)
+            self.assertEqual(len(third), 0)
+            self.assertEqual(len(fourth), 1)
+            self.assertEqual(fourth[0].text, "msg-2")
+
+    async def test_seen_ids_load_and_missing_file_are_graceful(self) -> None:
+        with _tmp_session_dir() as td:
+            channel = InstagramChannel(
+                session_dir=td,
+                on_message=_noop_on_message,
+                username="user",
+                password="pass",
+            )
+            channel._context = SimpleNamespace(add_cookies=AsyncMock())
+            channel.seen_ids_path.write_text(json.dumps(["th1", "th2"]), encoding="utf-8")
+
+            await channel.load_session()
+            self.assertEqual(channel._seen_message_ids, {"th1", "th2"})
+
+        with _tmp_session_dir() as td:
+            channel = InstagramChannel(
+                session_dir=td,
+                on_message=_noop_on_message,
+                username="user",
+                password="pass",
+            )
+            channel._context = SimpleNamespace(add_cookies=AsyncMock())
+
+            await channel.load_session()
+            self.assertEqual(channel._seen_message_ids, set())
+
+    async def test_save_session_persists_seen_ids(self) -> None:
+        with _tmp_session_dir() as td:
+            channel = InstagramChannel(
+                session_dir=td,
+                on_message=_noop_on_message,
+                username="user",
+                password="pass",
+            )
+            channel._seen_message_ids = {"th3", "th1"}
+            channel._context = SimpleNamespace(
+                cookies=AsyncMock(
+                    return_value=[{"name": "sid", "value": "v", "domain": "instagram.com", "path": "/"}]
+                )
+            )
+            channel._page = SimpleNamespace(
+                evaluate=AsyncMock(return_value=[["k", "v"]]),
+            )
+
+            await channel.save_session()
+
+            self.assertTrue(channel.seen_ids_path.exists())
+            payload = json.loads(channel.seen_ids_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload, ["th1", "th3"])
 
     async def test_send_uses_thread_lookup_and_compose(self) -> None:
         with _tmp_session_dir() as td:
@@ -488,6 +633,32 @@ class InstagramChannelTests(unittest.IsolatedAsyncioTestCase):
             page.evaluate.assert_awaited()
             keyboard.type.assert_awaited_once()
             keyboard.press.assert_awaited_once()
+
+    async def test_send_without_thread_found_logs_warning(self) -> None:
+        with _tmp_session_dir() as td:
+            keyboard = SimpleNamespace(press=AsyncMock(), type=AsyncMock())
+            page = SimpleNamespace(
+                goto=AsyncMock(),
+                evaluate=AsyncMock(return_value=False),
+                wait_for_selector=AsyncMock(),
+                click=AsyncMock(),
+                keyboard=keyboard,
+            )
+            channel = InstagramChannel(
+                session_dir=td,
+                on_message=_noop_on_message,
+                username="user",
+                password="pass",
+            )
+            channel._page = page
+
+            with self.assertLogs("huginn.channels", level="WARNING") as logs:
+                await channel.send("missing-recipient", "hello ig")
+
+            self.assertTrue(
+                any("SEND thread not found channel=instagram recipient=missing-recipient" in line for line in logs.output)
+            )
+            keyboard.type.assert_not_called()
 
 
 class _FailChannel:

@@ -30,6 +30,8 @@ class ConfigAndLoggerTests(unittest.TestCase):
         self.assertIsInstance(settings.huginn_port, int)
         self.assertGreater(settings.huginn_port, 0)
         self.assertIsInstance(settings.whatsapp_allowed_sender, str)
+        self.assertIsInstance(settings.instagram_poll_interval, float)
+        self.assertGreater(settings.instagram_poll_interval, 0.0)
 
     def test_configure_logging_is_idempotent(self) -> None:
         tmp_dir = Path("tests") / f"_tmp_huginn_runtime_{uuid.uuid4().hex[:8]}"

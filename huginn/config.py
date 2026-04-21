@@ -94,6 +94,7 @@ class HuginnSettings:
     instagram_username: str
     instagram_password: str
     instagram_session_dir: str
+    instagram_poll_interval: float
 
     # Server
     huginn_host: str
@@ -175,6 +176,10 @@ def get_settings() -> HuginnSettings:
             "INSTAGRAM_SESSION_DIR", "./huginn_sessions/instagram"
         ).strip()
         or "./huginn_sessions/instagram",
+        instagram_poll_interval=max(
+            1.0,
+            _as_float(os.getenv("INSTAGRAM_POLL_INTERVAL"), default=20.0),
+        ),
         huginn_host=os.getenv("HUGINN_HOST", "0.0.0.0").strip() or "0.0.0.0",
         huginn_port=max(1, _as_int(os.getenv("HUGINN_PORT"), default=8000)),
         huginn_webhook_base=os.getenv("HUGINN_WEBHOOK_BASE", "").strip(),
